@@ -1,0 +1,164 @@
+@baseUrl = http://localhost:8080
+
+# 서버 실행: .\mvnw.cmd spring-boot:run  (local 프로필 + MySQL)
+# id는 DB가 자동으로 정하므로 요청 본문에 id를 넣지 않는다.
+# {{createdProduct.response.body.$.id}} 처럼 앞 요청의 응답에서 id를 꺼내 쓴다.
+#  → [정상 1]을 먼저 실행해야 그 id를 쓰는 요청들이 동작한다.
+# 기존 데이터를 지우는 요청은 없다. 삭제는 [삭제 1]에서 새로 만든 상품만 지운다.
+
+
+### ===== 정상 요청 (위에서부터 순서대로) =====
+
+### 전체 상품 조회 (200)
+GET {{baseUrl}}/products
+
+### [정상 1] 상품 등록 (200, 응답에 DB가 정한 id 포함)
+# @name createdProduct
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Monitor",
+  "price": 200000
+}
+
+### [정상 2] 방금 등록한 상품 조회 (200)
+GET {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+
+### [정상 3] 방금 등록한 상품 수정 (200, id는 그대로)
+PUT {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "name": "Wide Monitor",
+  "price": 250000
+}
+
+### [정상 4] 수정 결과 확인 (200, Wide Monitor / 250000)
+GET {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+
+### [정상 5] 가격 0원 등록 (200, 0은 허용)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Free Sticker",
+  "price": 0
+}
+
+
+### ===== 삭제 흐름 (새로 만든 상품만 삭제) =====
+
+### [삭제 1] 삭제용 상품 등록 (200)
+# @name tempProduct
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Temp Item",
+  "price": 1000
+}
+
+### [삭제 2] 방금 만든 상품 삭제 (204)
+DELETE {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
+
+### [삭제 3] 삭제 후 조회 (404, Product not found)
+GET {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
+
+
+### ===== 400 Bad Request =====
+
+### [400-1] POST 본문에 id 포함 (id must not be provided)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "id": 5,
+  "name": "Mouse",
+  "price": 30000
+}
+
+### [400-2] name이 공백만 (name must not be blank)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "   ",
+  "price": 30000
+}
+
+### [400-3] price가 음수 (price must be greater than or equal to 0)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Mouse",
+  "price": -1
+}
+
+### [400-4] price 누락 (price must not be null)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Mouse"
+}
+
+### [400-5] 여러 필드 오류 (메시지가 ", "로 합쳐짐)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "id": 5,
+  "name": "",
+  "price": -1
+}
+
+### [400-6] 깨진 JSON (Malformed JSON request or missing required field)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name":
+}
+
+### [400-7] PUT 본문에 id 포함 (id must not be provided) - [정상 1] 먼저 실행
+PUT {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Wide Monitor",
+  "price": 250000
+}
+
+### [400-8] PUT name 빈 문자열 (name must not be blank) - [정상 1] 먼저 실행
+PUT {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "name": "",
+  "price": 250000
+}
+
+### [400-9] id 자리에 숫자가 아닌 값 (Bad Request)
+GET {{baseUrl}}/products/abc
+
+
+### ===== 404 Not Found =====
+### 999999번 상품은 없다고 가정 (Product not found)
+
+### [404-1] 없는 상품 조회
+GET {{baseUrl}}/products/999999
+
+### [404-2] 없는 상품 수정
+PUT {{baseUrl}}/products/999999
+Content-Type: application/json
+
+{
+  "name": "Ghost",
+  "price": 1000
+}
+
+### [404-3] 없는 상품 삭제
+DELETE {{baseUrl}}/products/999999
