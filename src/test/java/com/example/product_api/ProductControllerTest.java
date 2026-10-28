@@ -67,7 +67,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/products")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"Keyboard\",\"price\":50000}"))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andExpect(jsonPath("$.id").value(1))
             .andExpect(jsonPath("$.name").value("Keyboard"));
     }
@@ -111,7 +111,31 @@ class ProductControllerTest {
         mockMvc.perform(post("/products")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"Free Sticker\",\"price\":0}"))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
+    }
+
+    @Test
+    void createProductAllowsNameWith255Characters() throws Exception {
+        String name = "a".repeat(255);
+        when(productService.create(any(ProductRequest.class))).thenReturn(product(1L, name, 1000));
+
+        mockMvc.perform(post("/products")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"" + name + "\",\"price\":1000}"))
+            .andExpect(status().isCreated());
+    }
+
+    @Test
+    void createProductRejectsNameWith256Characters() throws Exception {
+        mockMvc.perform(post("/products")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"" + "a".repeat(256) + "\",\"price\":1000}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.message").value("name must be at most 255 characters"));
+
+        // 검증에서 막히므로 Service(DB)까지 가지 않는다
+        verifyNoInteractions(productService);
     }
 
     @Test
@@ -135,7 +159,8 @@ class ProductControllerTest {
             "{\"price\":55000}",                                 // name 누락
             "{\"name\":\"New Keyboard\",\"price\":-1}",          // price < 0
             "{\"name\":\"New Keyboard\"}",                       // price 누락
-            "{\"id\":1,\"name\":\"New Keyboard\",\"price\":55000}" // id 포함
+            "{\"id\":1,\"name\":\"New Keyboard\",\"price\":55000}", // id 포함
+            "{\"name\":\"" + "a".repeat(256) + "\",\"price\":55000}"   // name 256자
         };
 
         for (String body : invalidBodies) {
