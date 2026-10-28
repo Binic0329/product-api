@@ -12,7 +12,7 @@
 ### 전체 상품 조회 (200)
 GET {{baseUrl}}/products
 
-### [정상 1] 상품 등록 (200, 응답에 DB가 정한 id 포함)
+### [정상 1] 상품 등록 (201 Created, 응답에 DB가 정한 id 포함)
 # @name createdProduct
 POST {{baseUrl}}/products
 Content-Type: application/json
@@ -37,7 +37,7 @@ Content-Type: application/json
 ### [정상 4] 수정 결과 확인 (200, Wide Monitor / 250000)
 GET {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
 
-### [정상 5] 가격 0원 등록 (200, 0은 허용)
+### [정상 5] 가격 0원 등록 (201, 0은 허용)
 POST {{baseUrl}}/products
 Content-Type: application/json
 
@@ -49,7 +49,7 @@ Content-Type: application/json
 
 ### ===== 삭제 흐름 (새로 만든 상품만 삭제) =====
 
-### [삭제 1] 삭제용 상품 등록 (200)
+### [삭제 1] 삭제용 상품 등록 (201)
 # @name tempProduct
 POST {{baseUrl}}/products
 Content-Type: application/json
@@ -143,6 +143,15 @@ Content-Type: application/json
 
 ### [400-9] id 자리에 숫자가 아닌 값 (Bad Request)
 GET {{baseUrl}}/products/abc
+
+### [400-10] name 256자 - DB 컬럼(255자)보다 김 (name must be at most 255 characters)
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "price": 1000
+}
 
 
 ### ===== 404 Not Found =====

@@ -86,11 +86,32 @@ class ProductApiIntegrationTest {
         assertThat(productRepository.count()).isZero();
     }
 
+    @Test
+    void tooLongNameIsRejectedBeforeDatabase() throws Exception {
+        String name = "a".repeat(300);   // DB 컬럼은 varchar(255)
+
+        mockMvc.perform(post("/products")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"" + name + "\",\"price\":1000}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.message").value("name must be at most 255 characters"));
+
+        assertThat(productRepository.count()).isZero();
+    }
+
+    @Test
+    void nameWith255CharactersIsSaved() throws Exception {
+        Long id = createProduct("a".repeat(255), 1000);
+
+        assertThat(productRepository.findById(id).orElseThrow().getName()).hasSize(255);
+    }
+
     private Long createProduct(String name, int price) throws Exception {
         String response = mockMvc.perform(post("/products")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"" + name + "\",\"price\":" + price + "}"))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(response, "$.id")).longValue();
     }
