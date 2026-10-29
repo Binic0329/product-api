@@ -64,6 +64,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | ORM | Spring Data JPA, Hibernate |
 | Test | JUnit, Mockito, MockMvc, H2 (테스트 전용 메모리 DB) |
 | Build | Maven (Maven Wrapper 포함) |
+| CI | GitHub Actions (PR·push 시 전체 테스트 자동 실행) |
 | AI Tool | Claude Code |
 
 ## API
@@ -166,6 +167,9 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 ```
 
 테스트는 MySQL이나 환경 변수 없이 H2 메모리 DB로 실행됩니다 (`src/test/resources/application.properties`).
+
+`main` 브랜치 대상 PR을 만들거나 `main`에 push하면 GitHub Actions가 같은 테스트를 자동으로 실행합니다 (`.github/workflows/ci.yml`).
+결과는 PR의 Checks 또는 저장소의 Actions 탭에서 확인할 수 있습니다.
 
 | 테스트 | 방식 | 검증 내용 |
 |---|---|---|
