@@ -39,7 +39,7 @@ AI가 구현 중 문제를 발견하면 **임의로 수정하지 않고 먼저 �
 
 AI가 "완료"라고 보고해도 아래 단계로 직접 확인했습니다.
 
-1. 자동화 테스트 실행 (현재 33개)
+1. 자동화 테스트 실행 (현재 56개)
 2. 실제 서버를 띄워 API 요청으로 상태 코드 확인
 3. MySQL에 직접 접속해 `SELECT`로 저장 결과 확인
 4. 서버 재시작 후에도 데이터가 유지되는지 확인
@@ -59,7 +59,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | 구분 | 기술 |
 |---|---|
 | Language | Java 21 |
-| Framework | Spring Boot 4.0.8 (Spring Web MVC, Validation) |
+| Framework | Spring Boot 4.0.9 (Spring Web MVC, Validation) |
 | Database | MySQL 8.4 |
 | ORM | Spring Data JPA, Hibernate |
 | Test | JUnit, Mockito, MockMvc, H2 (테스트 전용 메모리 DB) |
@@ -76,6 +76,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | POST | `/products` | 상품 등록 | 201 | 400 |
 | PUT | `/products/{id}` | 상품 수정 | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 상품 삭제 | 204 | 404 |
+| POST | `/products/{id}/generate-description` | AI 상품 설명 생성 | 200 | 404, 502, 504 |
 
 **요청 본문 (POST, PUT)**
 
@@ -89,6 +90,28 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 - `id`는 DB가 자동으로 생성합니다. 요청 본문에 `id`가 포함되면 400을 반환합니다.
 - `name`: 필수, 공백만 있는 값 불가, 최대 255자
 - `price`: 필수, 0 이상
+
+**AI 상품 설명 생성 (`POST /products/{id}/generate-description`)**
+
+> 현재는 실제 AI 모델을 호출하지 않는 **Stub 구현**이 고정 문구를 돌려줍니다.
+> 실제 AI 모델 연동은 Story 9에서 진행합니다 (AWS 신규 계정 확인 대기로 Blocked).
+
+요청 본문은 없으며, 생성한 설명은 응답으로만 돌려주고 DB에는 저장하지 않습니다.
+
+```json
+{
+  "productId": 1,
+  "description": "Keyboard은(는) 50,000원에 판매되는 상품입니다."
+}
+```
+
+| 상황 | 상태 코드 | message |
+|---|---|---|
+| 없는 상품 (AI 호출 안 함) | 404 | `Product not found` |
+| AI 호출 실패, 빈 응답 | 502 | `AI service error` |
+| AI 응답 지연 | 504 | `AI service timeout` |
+
+AI 호출부는 `AiDescriptionClient` 인터페이스로 분리되어 있어, 실제 모델을 연결할 때 구현체만 추가하면 됩니다.
 
 **오류 응답 형식**
 
@@ -111,10 +134,18 @@ src/main/java/com/example/product_api
 ├── Product.java                # Entity (products 테이블)
 ├── ProductRequest.java         # 요청 DTO + 검증 규칙
 ├── GlobalExceptionHandler.java # 전역 예외 처리
-└── ApiErrorResponse.java       # 오류 응답 형식
+├── ApiErrorResponse.java       # 오류 응답 형식
+├── ProductDescriptionController.java # AI 상품 설명 생성 API
+├── ProductDescriptionService.java    # 상품 조회 → AI 호출 → AI 오류를 502/504로 변환
+├── ProductDescriptionResponse.java   # 설명 생성 응답 DTO
+├── AiDescriptionClient.java          # AI 호출 인터페이스
+├── StubAiDescriptionClient.java      # 실제 호출 없는 Stub 구현 (Story 8)
+└── AiClientException.java, AiTimeoutException.java # AI 실패 / 응답 지연
 ```
 
 요청 흐름: `Controller → Service → Repository → MySQL`
+
+설명 생성 흐름: `ProductDescriptionController → ProductDescriptionService → (ProductService로 상품 조회) → AiDescriptionClient`
 
 ## 실행 방법
 
@@ -177,6 +208,12 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 | `ProductControllerTest` | MockMvc + 가짜 Service | 상태 코드, 입력값 검증 |
 | `GlobalExceptionHandlerTest` | MockMvc | 오류 응답 형식, 내부 정보 비노출 |
 | `ProductApiIntegrationTest` | Spring Boot + H2 | Controller부터 DB까지 실제 저장·수정·삭제 |
+| `StubAiDescriptionClientTest` | 단위 테스트 | Stub 설명 문구, 가격 쉼표 형식, 경계값 |
+| `ProductDescriptionServiceTest` | Mockito (가짜 Service, 가짜 AI) | 404 시 AI 미호출, AI 실패 502, 지연 504, 빈 응답 502 |
+| `ProductDescriptionControllerTest` | MockMvc + 가짜 Service | 상태 코드, 오류 형식, AI 내부 메시지 비노출 |
+| `ProductDescriptionIntegrationTest` | Spring Boot + H2 | 설명 생성 후 DB가 바뀌지 않았는지 확인 |
+
+AI 관련 테스트는 실제 AI를 호출하지 않으므로, CI에서도 API 키 없이 실행됩니다.
 
 ## 개발 과정
 
@@ -190,6 +227,10 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 | 4 | 전역 예외 처리 및 오류 응답 형식 통일 |
 | 5 | Controller / Service 계층 분리, 생성자 주입 |
 | 6 | 메모리(ArrayList) 저장에서 MySQL + Spring Data JPA로 전환, 요청 DTO 도입, 테스트 환경 분리 |
+| 7 | POST 성공 시 201 Created 반환, 상품명 최대 255자 검증 (DB 컬럼보다 긴 이름이 500을 내던 문제를 400으로 수정) |
+| 8 | AI 상품 설명 생성 API (AI 호출 인터페이스 분리, Stub 구현, 502/504 오류 처리) |
+| 9 | 실제 AI 모델 연동 — Blocked (AWS 신규 계정 확인 대기) |
+| 10 | Docker, 배포 — 예정 |
 
 > Story 1~6은 Git 도입 전에 진행했으며, 그 결과가 첫 커밋에 포함되어 있습니다.
 > 이후 변경 사항은 Story 단위로 기록합니다.

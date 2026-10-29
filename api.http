@@ -66,6 +66,15 @@ DELETE {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
 GET {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
 
 
+### ===== AI 상품 설명 생성 (현재 Stub, DB에 저장하지 않음) =====
+
+### [설명 1] 방금 등록한 상품의 설명 생성 (200) - [정상 1] 먼저 실행
+POST {{baseUrl}}/products/{{createdProduct.response.body.$.id}}/generate-description
+
+### [설명 2] 설명 생성 후에도 상품 정보는 그대로인지 확인 (200)
+GET {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+
+
 ### ===== 400 Bad Request =====
 
 ### [400-1] POST 본문에 id 포함 (id must not be provided)
@@ -171,3 +180,6 @@ Content-Type: application/json
 
 ### [404-3] 없는 상품 삭제
 DELETE {{baseUrl}}/products/999999
+
+### [404-4] 없는 상품 설명 생성 (AI를 호출하지 않고 404)
+POST {{baseUrl}}/products/999999/generate-description
