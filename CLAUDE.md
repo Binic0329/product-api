@@ -69,6 +69,12 @@
 - 전체 테스트: `.\mvnw.cmd test`
 - 확인용 서버를 띄울 때는 사용자의 서버와 겹치지 않도록 다른 포트를 쓰고, 확인 후 반드시 종료한다: `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--server.port=18080"`
 
+CI (GitHub Actions):
+- 설정 파일: `.github/workflows/ci.yml`. `main` push와 `main` 대상 PR에서 Java 21로 `./mvnw -B test` 실행
+- 위 H2 테스트 설정으로만 돌아간다. CI에 MySQL, DB 계정 환경 변수, `secrets`를 추가하지 않는다
+- 권한은 `contents: read`만 둔다. 늘려야 하면 먼저 이유를 설명하고 확인을 받는다
+- `mvnw`는 Git에 실행 권한(`100755`)으로 기록되어 있다. 이 권한이 빠지면 CI가 실패한다
+
 ## 테스트
 
 테스트 클래스별 역할:
