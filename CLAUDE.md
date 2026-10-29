@@ -28,6 +28,12 @@
 | `ProductRequest` | POST/PUT 요청 DTO. 검증 규칙은 여기에 둔다 |
 | `GlobalExceptionHandler` | `@RestControllerAdvice`. 모든 오류를 `ApiErrorResponse` 형식으로 변환 |
 | `ApiErrorResponse` | 오류 응답 record `{status, message}` |
+| `ProductDescriptionController` | `POST /products/{id}/generate-description`. `ProductController`와 분리해 CRUD 코드·테스트를 건드리지 않는다 |
+| `ProductDescriptionService` | 상품 조회(404 재사용) → AI 호출 → AI 예외를 502/504로 변환. 느린 AI 호출 중 트랜잭션을 잡지 않도록 `@Transactional`을 붙이지 않는다 |
+| `AiDescriptionClient` | AI 호출 인터페이스. 구현체는 SDK 예외를 `AiClientException`/`AiTimeoutException`으로 바꿔 던진다 |
+| `StubAiDescriptionClient` | 실제 호출 없이 고정 문구를 돌려주는 구현체 (Story 8). 실제 모델 연동은 Story 9 |
+| `AiClientException`, `AiTimeoutException` | AI 실패(→502), AI 응답 지연(→504). `AiTimeoutException`은 `AiClientException`을 상속 |
+| `ProductDescriptionResponse` | 설명 생성 응답 record `{productId, description}`. DB에 저장하지 않는다 |
 | `HelloController` | `GET /hello` 학습용 엔드포인트 (상품 API와 무관) |
 
 - 의존성은 생성자 주입으로 받는다. 직접 `new`로 Service/Repository를 만들지 않는다.
@@ -42,6 +48,15 @@
 | POST | `/products` | 201 | 400 |
 | PUT | `/products/{id}` | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 204 | 404 |
+| POST | `/products/{id}/generate-description` | 200 | 404, 502, 504 |
+
+설명 생성 (`/generate-description`):
+- 요청 본문 없음. 응답 `{"productId": 1, "description": "..."}`, DB에 저장하지 않으므로 201이 아닌 200
+- 없는 상품이면 AI를 호출하지 않고 404
+- `AiClientException`, AI 응답이 `null`/빈 문자열/공백만: 502 `AI service error`
+- `AiTimeoutException`: 504 `AI service timeout`
+- 그 밖의 예외는 502로 감추지 않는다 (기존 규칙대로 500)
+- 현재는 `StubAiDescriptionClient`만 있고 테스트에서도 실제 AI를 호출하지 않는다
 
 요청 본문 검증 (`ProductRequest`):
 - `id`: 보내면 400 (`id must not be provided`). id는 DB가 정하고, PUT은 URL의 id만 사용한다
@@ -86,6 +101,10 @@ CI (GitHub Actions):
 | `GlobalExceptionHandlerTest` | 오류 응답 형식, 500 시 내부 정보 비노출 (테스트 전용 `FailingController` 사용) |
 | `ProductApiIntegrationTest` | `@SpringBootTest` + H2. Controller부터 DB까지 실제 저장·수정·삭제 확인 |
 | `ProductApiApplicationTests` | 컨텍스트 로딩 |
+| `StubAiDescriptionClientTest` | Stub 문구, `Locale.KOREA` 천 단위 쉼표, 0원·255자 경계값 |
+| `ProductDescriptionServiceTest` | Mockito로 가짜 `ProductService`·`AiDescriptionClient` 주입. 404 시 AI 미호출, 502/504 변환, 빈 응답 502 |
+| `ProductDescriptionControllerTest` | MockMvc standaloneSetup. 상태 코드와 오류 형식, AI 내부 메시지 비노출 |
+| `ProductDescriptionIntegrationTest` | `@SpringBootTest` + H2 + 실제 Stub. 응답 확인 후 Repository로 DB가 바뀌지 않았는지 확인 |
 
 규칙:
 - 테스트 개수는 이 문서에 고정하지 않는다. 작업 전 `.\mvnw.cmd test`로 현재 결과(실행 개수, 실패 개수)를 기준으로 확인한다.
