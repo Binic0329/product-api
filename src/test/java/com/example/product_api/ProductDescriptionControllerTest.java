@@ -77,6 +77,17 @@ class ProductDescriptionControllerTest {
             .andExpect(jsonPath("$.message").value("AI service timeout"));
     }
 
+    @Test
+    void aiUnavailableReturnsServiceUnavailable() throws Exception {
+        when(productDescriptionService.generate(1L))
+            .thenThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AI service unavailable"));
+
+        mockMvc.perform(post("/products/1/generate-description"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.status").value(503))
+            .andExpect(jsonPath("$.message").value("AI service unavailable"));
+    }
+
     // 실제 Service를 넣어, AI 예외의 내부 메시지가 응답까지 새어 나가지 않는지 확인한다
     @Test
     void aiErrorDoesNotExposeInternalDetails() throws Exception {

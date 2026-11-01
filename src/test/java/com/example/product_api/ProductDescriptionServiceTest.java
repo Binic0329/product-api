@@ -73,6 +73,17 @@ class ProductDescriptionServiceTest {
             .satisfies(ex -> assertStatus(ex, HttpStatus.GATEWAY_TIMEOUT, "AI service timeout"));
     }
 
+    // 요청 한도 초과(429) 등 일시적으로 쓸 수 없는 상황은 다시 시도할 수 있다는 뜻으로 503
+    @Test
+    void aiUnavailableBecomesServiceUnavailable() {
+        when(productService.findById(1L)).thenReturn(product(1L, "Keyboard", 50000));
+        when(aiDescriptionClient.generate("Keyboard", 50000))
+            .thenThrow(new AiUnavailableException("rate limited"));
+
+        assertThatThrownBy(() -> productDescriptionService.generate(1L))
+            .satisfies(ex -> assertStatus(ex, HttpStatus.SERVICE_UNAVAILABLE, "AI service unavailable"));
+    }
+
     // null, 빈 문자열, 공백만 있는 응답은 쓸 수 없는 응답이므로 502
     @ParameterizedTest
     @NullAndEmptySource

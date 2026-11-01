@@ -30,6 +30,9 @@ public class ProductDescriptionService {
             // 원인은 서버 로그에만 남기고 응답에는 고정 메시지만 보낸다
             log.warn("AI description timed out (productId={})", id, ex);
             throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "AI service timeout");
+        } catch (AiUnavailableException ex) {
+            log.warn("AI description unavailable (productId={})", id, ex);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AI service unavailable");
         } catch (AiClientException ex) {
             log.warn("AI description failed (productId={})", id, ex);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI service error");
