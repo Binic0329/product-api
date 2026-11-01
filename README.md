@@ -39,7 +39,7 @@ AI가 구현 중 문제를 발견하면 **임의로 수정하지 않고 먼저 �
 
 AI가 "완료"라고 보고해도 아래 단계로 직접 확인했습니다.
 
-1. 자동화 테스트 실행 (현재 56개)
+1. 자동화 테스트 실행 (현재 88개)
 2. 실제 서버를 띄워 API 요청으로 상태 코드 확인
 3. MySQL에 직접 접속해 `SELECT`로 저장 결과 확인
 4. 서버 재시작 후에도 데이터가 유지되는지 확인
@@ -65,6 +65,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | Test | JUnit, Mockito, MockMvc, H2 (테스트 전용 메모리 DB) |
 | Build | Maven (Maven Wrapper 포함) |
 | CI | GitHub Actions (PR·push 시 전체 테스트 자동 실행) |
+| AI API | Google Gemini API (`gemini-3.5-flash-lite`, `generateContent` REST, Spring `RestClient`) |
 | AI Tool | Claude Code |
 
 ## API
@@ -76,7 +77,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | POST | `/products` | 상품 등록 | 201 | 400 |
 | PUT | `/products/{id}` | 상품 수정 | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 상품 삭제 | 204 | 404 |
-| POST | `/products/{id}/generate-description` | AI 상품 설명 생성 | 200 | 404, 502, 504 |
+| POST | `/products/{id}/generate-description` | AI 상품 설명 생성 | 200 | 404, 502, 503, 504 |
 
 **요청 본문 (POST, PUT)**
 
@@ -93,25 +94,34 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 
 **AI 상품 설명 생성 (`POST /products/{id}/generate-description`)**
 
-> 현재는 실제 AI 모델을 호출하지 않는 **Stub 구현**이 고정 문구를 돌려줍니다.
-> 실제 AI 모델 연동은 Story 9에서 진행합니다 (AWS 신규 계정 확인 대기로 Blocked).
-
+상품 이름과 가격만으로 한국어 설명(1~3문장)을 생성합니다.
 요청 본문은 없으며, 생성한 설명은 응답으로만 돌려주고 DB에는 저장하지 않습니다.
 
 ```json
 {
   "productId": 1,
-  "description": "Keyboard은(는) 50,000원에 판매되는 상품입니다."
+  "description": "가볍게 들고 다니며 쓰기 좋은 무선 마우스로, 25,000원에 만나볼 수 있습니다."
 }
 ```
+
+AI 구현체는 설정(`AI_CLIENT` 환경 변수)으로 고릅니다. 기본값은 Stub입니다.
+
+| 모드 | 구현체 | 동작 |
+|---|---|---|
+| `stub` (기본값) | `StubAiDescriptionClient` | 실제 호출 없이 고정 문구 반환 (`Keyboard은(는) 50,000원에 판매되는 상품입니다.`) |
+| `gemini` | `GeminiAiDescriptionClient` | Google Gemini API(`gemini-3.5-flash-lite`)를 실제로 호출 |
 
 | 상황 | 상태 코드 | message |
 |---|---|---|
 | 없는 상품 (AI 호출 안 함) | 404 | `Product not found` |
-| AI 호출 실패, 빈 응답 | 502 | `AI service error` |
-| AI 응답 지연 | 504 | `AI service timeout` |
+| AI 오류 응답(인증 실패, 5xx 등), 연결 실패, 빈 응답, 잘못된 응답 구조 | 502 | `AI service error` |
+| AI 요청 한도 초과 (Gemini 429) | 503 | `AI service unavailable` |
+| AI 응답 지연 (타임아웃) | 504 | `AI service timeout` |
 
-AI 호출부는 `AiDescriptionClient` 인터페이스로 분리되어 있어, 실제 모델을 연결할 때 구현체만 추가하면 됩니다.
+**프롬프트 규칙**: 제공된 상품 이름·가격만 사용하고, 제공되지 않은 성능·규격·기능·브랜드는 지어내지 않도록 지시합니다.
+규칙은 Gemini의 system instruction으로, 상품 정보는 사용자 메시지로 나눠 보냅니다.
+
+AI 호출부는 `AiDescriptionClient` 인터페이스로 분리되어 있어(Story 8), Story 9에서는 기존 코드를 거의 바꾸지 않고 Gemini 구현체만 추가했습니다.
 
 **오류 응답 형식**
 
@@ -136,11 +146,12 @@ src/main/java/com/example/product_api
 ├── GlobalExceptionHandler.java # 전역 예외 처리
 ├── ApiErrorResponse.java       # 오류 응답 형식
 ├── ProductDescriptionController.java # AI 상품 설명 생성 API
-├── ProductDescriptionService.java    # 상품 조회 → AI 호출 → AI 오류를 502/504로 변환
+├── ProductDescriptionService.java    # 상품 조회 → AI 호출 → AI 오류를 502/503/504로 변환
 ├── ProductDescriptionResponse.java   # 설명 생성 응답 DTO
 ├── AiDescriptionClient.java          # AI 호출 인터페이스
-├── StubAiDescriptionClient.java      # 실제 호출 없는 Stub 구현 (Story 8)
-└── AiClientException.java, AiTimeoutException.java # AI 실패 / 응답 지연
+├── StubAiDescriptionClient.java      # 실제 호출 없는 Stub 구현 (Story 8, 기본값)
+├── GeminiAiDescriptionClient.java    # Google Gemini API 구현 (Story 9)
+└── AiClientException.java, AiUnavailableException.java, AiTimeoutException.java # AI 실패 / 한도 초과 / 응답 지연
 ```
 
 요청 흐름: `Controller → Service → Repository → MySQL`
@@ -184,6 +195,33 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 
 - `spring-boot:run`으로 실행하면 `local` 프로필이 적용되어, Entity를 기준으로 테이블이 자동 생성됩니다 (`ddl-auto=update`, 로컬 개발 전용).
 - 기본 포트는 `8080`이며, `api.http`에 확인용 요청이 정리되어 있습니다 (VS Code REST Client).
+- 아무 설정 없이 실행하면 AI 설명 생성은 **Stub 모드**로 동작합니다 (API 키 불필요).
+
+### 4. (선택) Gemini 모드로 실행
+
+[Google AI Studio](https://aistudio.google.com/)에서 Gemini API 키를 발급받은 뒤, 키는 파일이 아닌 **환경 변수**로만 전달합니다.
+
+| 이름 | 설명 |
+|---|---|
+| `AI_CLIENT` | `gemini`로 설정하면 Gemini 호출 (없거나 `stub`이면 Stub) |
+| `GEMINI_API_KEY` | Gemini API 키. Gemini 모드인데 비어 있으면 서버가 시작되지 않습니다 (`GEMINI_API_KEY is not set`) |
+
+```powershell
+# Windows (PowerShell) - 현재 터미널 창에서만 유효
+$env:AI_CLIENT = "gemini"
+$env:GEMINI_API_KEY = "<발급받은 키>"
+.\mvnw.cmd spring-boot:run
+```
+
+```bash
+# macOS / Linux
+AI_CLIENT=gemini GEMINI_API_KEY=<발급받은 키> ./mvnw spring-boot:run
+```
+
+- Stub 모드로 돌아가려면 새 터미널에서 실행하거나 `Remove-Item Env:AI_CLIENT`로 변수를 지웁니다.
+- 모델 이름, API 주소, 타임아웃(연결 5초, 응답 20초)은 `src/main/resources/application.properties`의 `ai.gemini.*`에서 바꿀 수 있습니다.
+- 키는 URL이 아닌 `x-goog-api-key` 헤더로 보내며, 코드·설정 파일·로그·테스트에 남기지 않습니다.
+- 무료 등급은 분당·일일 요청 수 제한이 있습니다. 한도를 넘으면 Gemini가 429를 돌려주고, 이 API는 503 `AI service unavailable`로 응답합니다. 정확한 한도는 Google AI Studio의 안내를 확인하세요.
 
 ## 테스트
 
@@ -209,11 +247,14 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 | `GlobalExceptionHandlerTest` | MockMvc | 오류 응답 형식, 내부 정보 비노출 |
 | `ProductApiIntegrationTest` | Spring Boot + H2 | Controller부터 DB까지 실제 저장·수정·삭제 |
 | `StubAiDescriptionClientTest` | 단위 테스트 | Stub 설명 문구, 가격 쉼표 형식, 경계값 |
-| `ProductDescriptionServiceTest` | Mockito (가짜 Service, 가짜 AI) | 404 시 AI 미호출, AI 실패 502, 지연 504, 빈 응답 502 |
+| `ProductDescriptionServiceTest` | Mockito (가짜 Service, 가짜 AI) | 404 시 AI 미호출, AI 실패 502, 한도 초과 503, 지연 504, 빈 응답 502 |
 | `ProductDescriptionControllerTest` | MockMvc + 가짜 Service | 상태 코드, 오류 형식, AI 내부 메시지 비노출 |
-| `ProductDescriptionIntegrationTest` | Spring Boot + H2 | 설명 생성 후 DB가 바뀌지 않았는지 확인 |
+| `ProductDescriptionIntegrationTest` | Spring Boot + H2 (Stub 모드) | 설명 생성 후 DB가 바뀌지 않았는지 확인 |
+| `GeminiAiDescriptionClientTest` | 가짜 Gemini 서버 (localhost) | 요청 형식(모델 경로, 키 헤더, 프롬프트), 응답 파싱, 401/403/5xx·429·타임아웃·연결 실패·잘못된 응답 구분 |
+| `AiClientSelectionTest` | Spring 컨텍스트 | 설정에 따라 Stub/Gemini 중 하나만 등록, 키 없으면 시작 실패 |
+| `GeminiDescriptionIntegrationTest` | Spring Boot + H2 + 가짜 Gemini 서버 | Gemini 모드에서 Controller부터 Gemini 호출까지 연결, 오류별 상태 코드 |
 
-AI 관련 테스트는 실제 AI를 호출하지 않으므로, CI에서도 API 키 없이 실행됩니다.
+AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 Gemini 서버를 사용하므로, CI에서도 API 키 없이 실행됩니다.
 
 ## 개발 과정
 
@@ -229,8 +270,12 @@ AI 관련 테스트는 실제 AI를 호출하지 않으므로, CI에서도 API �
 | 6 | 메모리(ArrayList) 저장에서 MySQL + Spring Data JPA로 전환, 요청 DTO 도입, 테스트 환경 분리 |
 | 7 | POST 성공 시 201 Created 반환, 상품명 최대 255자 검증 (DB 컬럼보다 긴 이름이 500을 내던 문제를 400으로 수정) |
 | 8 | AI 상품 설명 생성 API (AI 호출 인터페이스 분리, Stub 구현, 502/504 오류 처리) |
-| 9 | 실제 AI 모델 연동 — Blocked (AWS 신규 계정 확인 대기) |
+| 9 | Google Gemini API 실제 연동, Stub/Gemini 설정 전환, 429를 503으로 처리, 연결·응답 타임아웃 |
 | 10 | Docker, 배포 — 예정 |
 
 > Story 1~6은 Git 도입 전에 진행했으며, 그 결과가 첫 커밋에 포함되어 있습니다.
 > 이후 변경 사항은 Story 단위로 기록합니다.
+
+> Story 9는 원래 AWS Bedrock 연동으로 계획했으나, 신규 AWS 계정 확인이 정해 둔 기한(2026-10-31)까지 끝나지 않아
+> Google Gemini API로 먼저 구현했습니다. Story 8에서 AI 호출부를 인터페이스로 분리해 두었기 때문에,
+> 기존 Service·Controller는 거의 그대로 두고 구현체만 추가하는 방식으로 대응할 수 있었습니다.

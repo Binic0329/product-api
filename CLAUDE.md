@@ -29,10 +29,11 @@
 | `GlobalExceptionHandler` | `@RestControllerAdvice`. 모든 오류를 `ApiErrorResponse` 형식으로 변환 |
 | `ApiErrorResponse` | 오류 응답 record `{status, message}` |
 | `ProductDescriptionController` | `POST /products/{id}/generate-description`. `ProductController`와 분리해 CRUD 코드·테스트를 건드리지 않는다 |
-| `ProductDescriptionService` | 상품 조회(404 재사용) → AI 호출 → AI 예외를 502/504로 변환. 느린 AI 호출 중 트랜잭션을 잡지 않도록 `@Transactional`을 붙이지 않는다 |
-| `AiDescriptionClient` | AI 호출 인터페이스. 구현체는 SDK 예외를 `AiClientException`/`AiTimeoutException`으로 바꿔 던진다 |
-| `StubAiDescriptionClient` | 실제 호출 없이 고정 문구를 돌려주는 구현체 (Story 8). 실제 모델 연동은 Story 9 |
-| `AiClientException`, `AiTimeoutException` | AI 실패(→502), AI 응답 지연(→504). `AiTimeoutException`은 `AiClientException`을 상속 |
+| `ProductDescriptionService` | 상품 조회(404 재사용) → AI 호출 → AI 예외를 502/503/504로 변환. 느린 AI 호출 중 트랜잭션을 잡지 않도록 `@Transactional`을 붙이지 않는다 |
+| `AiDescriptionClient` | AI 호출 인터페이스. 구현체는 HTTP·SDK 예외를 `AiClientException`/`AiUnavailableException`/`AiTimeoutException`으로 바꿔 던진다 |
+| `StubAiDescriptionClient` | 실제 호출 없이 고정 문구를 돌려주는 구현체 (Story 8). `ai.client`가 없거나 `stub`일 때 등록 |
+| `GeminiAiDescriptionClient` | Gemini `generateContent` REST 호출 (Story 9). `ai.client=gemini`일 때만 등록. `RestClient` + JDK HttpClient 타임아웃, 키는 `x-goog-api-key` 헤더 |
+| `AiClientException`, `AiUnavailableException`, `AiTimeoutException` | AI 실패(→502), 요청 한도 초과 429(→503), AI 응답 지연(→504). 뒤의 둘은 `AiClientException`을 상속하므로 Service에서 먼저 잡는다 |
 | `ProductDescriptionResponse` | 설명 생성 응답 record `{productId, description}`. DB에 저장하지 않는다 |
 | `HelloController` | `GET /hello` 학습용 엔드포인트 (상품 API와 무관) |
 
@@ -48,15 +49,17 @@
 | POST | `/products` | 201 | 400 |
 | PUT | `/products/{id}` | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 204 | 404 |
-| POST | `/products/{id}/generate-description` | 200 | 404, 502, 504 |
+| POST | `/products/{id}/generate-description` | 200 | 404, 502, 503, 504 |
 
 설명 생성 (`/generate-description`):
 - 요청 본문 없음. 응답 `{"productId": 1, "description": "..."}`, DB에 저장하지 않으므로 201이 아닌 200
 - 없는 상품이면 AI를 호출하지 않고 404
-- `AiClientException`, AI 응답이 `null`/빈 문자열/공백만: 502 `AI service error`
+- `AiClientException`(오류 상태 코드, 연결 실패, 응답 구조 이상), AI 응답이 `null`/빈 문자열/공백만: 502 `AI service error`
+- `AiUnavailableException`(Gemini 429): 503 `AI service unavailable`
 - `AiTimeoutException`: 504 `AI service timeout`
 - 그 밖의 예외는 502로 감추지 않는다 (기존 규칙대로 500)
-- 현재는 `StubAiDescriptionClient`만 있고 테스트에서도 실제 AI를 호출하지 않는다
+- AI 호출 실패 시 임의의 성공 응답(대체 문구)을 만들어 반환하지 않는다
+- 프롬프트 규칙(`GeminiAiDescriptionClient.SYSTEM_INSTRUCTION`): 한국어 1~3문장, 제공된 이름·가격만 사용, 없는 사양·브랜드를 지어내지 않음, 본문만 출력
 
 요청 본문 검증 (`ProductRequest`):
 - `id`: 보내면 400 (`id must not be provided`). id는 DB가 정하고, PUT은 URL의 id만 사용한다
@@ -78,6 +81,10 @@
 - `src/main/resources/application-local.properties`: `ddl-auto=update` (로컬 개발 전용)
 - `local` 프로필은 pom.xml의 spring-boot-maven-plugin 설정으로 `spring-boot:run`에서만 적용된다. 테스트에는 적용되지 않는다
 - `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=create-drop`. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
+- AI 설정 (`application.properties`): `ai.client=${AI_CLIENT:stub}`, `ai.gemini.*`(base-url, model, connect-timeout, read-timeout), `ai.gemini.api-key=${GEMINI_API_KEY:}`
+  - 기본값은 Stub. Gemini 모드인데 키가 비어 있으면 서버 시작 시 `GEMINI_API_KEY is not set`으로 실패한다
+  - 테스트 설정 파일에는 `ai.*`가 없어서 테스트는 기본적으로 Stub 모드다. Gemini 테스트는 `FakeGeminiServer`(localhost)를 쓰고 실제 Google 서버를 호출하지 않는다
+  - 실제 Gemini 호출 확인은 사용자가 환경 변수를 직접 설정해 수동으로 한다. AI는 키 값을 요청·출력하지 않는다
 
 명령어 (Windows PowerShell 기준):
 - 서버 실행: `.\mvnw.cmd spring-boot:run`
@@ -102,9 +109,12 @@ CI (GitHub Actions):
 | `ProductApiIntegrationTest` | `@SpringBootTest` + H2. Controller부터 DB까지 실제 저장·수정·삭제 확인 |
 | `ProductApiApplicationTests` | 컨텍스트 로딩 |
 | `StubAiDescriptionClientTest` | Stub 문구, `Locale.KOREA` 천 단위 쉼표, 0원·255자 경계값 |
-| `ProductDescriptionServiceTest` | Mockito로 가짜 `ProductService`·`AiDescriptionClient` 주입. 404 시 AI 미호출, 502/504 변환, 빈 응답 502 |
+| `ProductDescriptionServiceTest` | Mockito로 가짜 `ProductService`·`AiDescriptionClient` 주입. 404 시 AI 미호출, 502/503/504 변환, 빈 응답 502 |
 | `ProductDescriptionControllerTest` | MockMvc standaloneSetup. 상태 코드와 오류 형식, AI 내부 메시지 비노출 |
 | `ProductDescriptionIntegrationTest` | `@SpringBootTest` + H2 + 실제 Stub. 응답 확인 후 Repository로 DB가 바뀌지 않았는지 확인 |
+| `GeminiAiDescriptionClientTest` | `FakeGeminiServer`(JDK `HttpServer`, localhost)에 실제 HTTP 요청. 요청 형식, 파싱, 상태 코드별 예외, 타임아웃, 연결 실패 |
+| `AiClientSelectionTest` | `ApplicationContextRunner`. `ai.client` 값에 따라 구현체가 하나만 등록되는지, 키 없으면 시작 실패 |
+| `GeminiDescriptionIntegrationTest` | `@SpringBootTest` + H2 + `ai.client=gemini` + `FakeGeminiServer`. 전체 흐름과 오류별 상태 코드 |
 
 규칙:
 - 테스트 개수는 이 문서에 고정하지 않는다. 작업 전 `.\mvnw.cmd test`로 현재 결과(실행 개수, 실패 개수)를 기준으로 확인한다.

@@ -66,13 +66,32 @@ DELETE {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
 GET {{baseUrl}}/products/{{tempProduct.response.body.$.id}}
 
 
-### ===== AI 상품 설명 생성 (현재 Stub, DB에 저장하지 않음) =====
+### ===== AI 상품 설명 생성 (DB에 저장하지 않음) =====
+# 서버를 어떻게 켰는지에 따라 결과가 다르다.
+#  - 기본 실행: Stub 모드 → "Monitor은(는) 200,000원에 판매되는 상품입니다."
+#  - Gemini 모드: PowerShell에서 $env:AI_CLIENT="gemini", $env:GEMINI_API_KEY 설정 후 서버 실행
+#    → Gemini가 만든 한국어 설명. 한도 초과 시 503, 응답 지연 시 504, 그 밖의 AI 오류는 502
+# Gemini 모드에서는 요청마다 무료 한도가 차감되므로 필요한 만큼만 실행한다.
 
 ### [설명 1] 방금 등록한 상품의 설명 생성 (200) - [정상 1] 먼저 실행
 POST {{baseUrl}}/products/{{createdProduct.response.body.$.id}}/generate-description
 
 ### [설명 2] 설명 생성 후에도 상품 정보는 그대로인지 확인 (200)
 GET {{baseUrl}}/products/{{createdProduct.response.body.$.id}}
+
+### [설명 3] 없는 사양을 지어내지 않는지 확인용 상품 등록 (201)
+# @name mouseProduct
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+  "name": "Wireless Mouse",
+  "price": 25000
+}
+
+### [설명 4] Wireless Mouse 설명 생성 (200)
+# Gemini 모드에서 2.4GHz, DPI, 인체공학 같은 제공되지 않은 사양이 없는지 눈으로 확인한다
+POST {{baseUrl}}/products/{{mouseProduct.response.body.$.id}}/generate-description
 
 
 ### ===== 400 Bad Request =====
