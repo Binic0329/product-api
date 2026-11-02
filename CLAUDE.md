@@ -21,11 +21,13 @@
 
 | 파일 | 역할 |
 |---|---|
-| `ProductController` | HTTP 요청·응답만 담당. `@Valid` 검증, 상태 코드 지정. 비즈니스 로직을 두지 않는다 |
-| `ProductService` | 비즈니스 로직과 트랜잭션(`@Transactional`). 없는 상품은 `ResponseStatusException(NOT_FOUND)` |
+| `ProductController` | HTTP 요청·응답만 담당. `@Valid` 검증, 상태 코드 지정, Entity → `ProductResponse` 변환. 비즈니스 로직을 두지 않는다. 설명 저장 `PUT /products/{id}/description`도 여기 있다 |
+| `ProductService` | 비즈니스 로직과 트랜잭션(`@Transactional`). 없는 상품은 `ResponseStatusException(NOT_FOUND)`. `updateDescription`은 설명만 바꾼다 |
 | `ProductRepository` | `JpaRepository<Product, Long>`. DB 접근만 담당 |
-| `Product` | JPA Entity (`products` 테이블). id는 `@GeneratedValue(IDENTITY)`로 DB가 생성, `setId` 없음 |
-| `ProductRequest` | POST/PUT 요청 DTO. 검증 규칙은 여기에 둔다 |
+| `Product` | JPA Entity (`products` 테이블). id는 `@GeneratedValue(IDENTITY)`로 DB가 생성, `setId` 없음. `description`(최대 1000자, null 허용) |
+| `ProductRequest` | POST/PUT 요청 DTO. 검증 규칙은 여기에 둔다. description은 받지 않는다 |
+| `ProductResponse` | 상품 응답 record `{id, name, price, description}`. 상품 API는 Entity를 그대로 응답하지 않는다 |
+| `ProductDescriptionRequest` | 설명 저장 요청 DTO. `@NotBlank`, `@Size(max = 1000)` |
 | `GlobalExceptionHandler` | `@RestControllerAdvice`. 모든 오류를 `ApiErrorResponse` 형식으로 변환 |
 | `ApiErrorResponse` | 오류 응답 record `{status, message}` |
 | `ProductDescriptionController` | `POST /products/{id}/generate-description`. `ProductController`와 분리해 CRUD 코드·테스트를 건드리지 않는다 |
@@ -38,7 +40,7 @@
 | `HelloController` | `GET /hello` 학습용 엔드포인트 (상품 API와 무관) |
 
 - 의존성은 생성자 주입으로 받는다. 직접 `new`로 Service/Repository를 만들지 않는다.
-- Controller에는 `Product` Entity가 아닌 `ProductRequest`를 요청 본문으로 받는다.
+- Controller에는 `Product` Entity가 아닌 `ProductRequest`/`ProductDescriptionRequest`를 요청 본문으로 받고, 응답은 `ProductResponse`로 돌려준다.
 
 ## 현재 API 계약 (유지 대상)
 
@@ -50,6 +52,16 @@
 | PUT | `/products/{id}` | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 204 | 404 |
 | POST | `/products/{id}/generate-description` | 200 | 404, 502, 503, 504 |
+| PUT | `/products/{id}/description` | 200 | 400, 404 |
+
+상품 응답 (`ProductResponse`): `{"id": 1, "name": "...", "price": 1000, "description": null}`. 필드 순서는 id, name, price, description
+
+설명 검토·저장 (Story 10):
+- AI 초안 생성(`generate-description`)은 미리보기 전용이다. DB에 저장하지 않는다
+- 사람이 검토한 설명은 `PUT /products/{id}/description`으로만 저장한다. 요청 `{"description": "..."}`, 응답은 수정된 상품(`ProductResponse`)
+- `description`: `@NotBlank`(`description must not be blank`), `@Size(max = 1000)`(`description must be at most 1000 characters`), DB 컬럼 varchar(1000)
+- `PUT /products/{id}`(이름·가격 수정)는 저장된 설명을 유지한다
+- 다시 저장하면 덮어쓴다. 설명 이력은 관리하지 않는다
 
 설명 생성 (`/generate-description`):
 - 요청 본문 없음. 응답 `{"productId": 1, "description": "..."}`, DB에 저장하지 않으므로 201이 아닌 200
@@ -77,10 +89,17 @@
 
 ## 설정과 실행
 
-- `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=none`
-- `src/main/resources/application-local.properties`: `ddl-auto=update` (로컬 개발 전용)
+- `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=validate`
+- `src/main/resources/application-local.properties`: `ddl-auto=validate` (Story 10부터 로컬에서도 Hibernate가 테이블을 바꾸지 않는다)
 - `local` 프로필은 pom.xml의 spring-boot-maven-plugin 설정으로 `spring-boot:run`에서만 적용된다. 테스트에는 적용되지 않는다
-- `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=create-drop`. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
+- `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=validate`, 테이블은 Flyway가 만든다. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
+
+DB 스키마 (Flyway, Story 10):
+- 테이블 구조는 `src/main/resources/db/migration`의 SQL 파일로만 바꾼다. `V1__create_products_table.sql`(기존 테이블), `V2__add_product_description.sql`(description 추가)
+- **이미 적용된 마이그레이션 파일은 수정하지 않는다.** 변경은 새 버전 파일(`V3__...`)로 추가한다. Entity와 마이그레이션은 같은 작업에서 함께 고친다
+- `ddl-auto`를 `update`/`create`/`create-drop`으로 되돌리지 않는다 (Flyway와 충돌)
+- `spring.flyway.baseline-on-migrate=false`가 기본값이다. 기록 테이블 없는 기존 MySQL을 전환할 때만 사용자가 백업 후 `SPRING_FLYWAY_BASELINE_ON_MIGRATE=true`로 한 번 실행한다 (README "기존 DB를 Flyway로 전환")
+- 실제 MySQL에 마이그레이션을 적용하는 것은 "위험한 작업"이다. AI가 실행하지 않고, 사용자가 백업과 승인 후 직접 한다
 - AI 설정 (`application.properties`): `ai.client=${AI_CLIENT:stub}`, `ai.gemini.*`(base-url, model, connect-timeout, read-timeout), `ai.gemini.api-key=${GEMINI_API_KEY:}`
   - 기본값은 Stub. Gemini 모드인데 키가 비어 있으면 서버 시작 시 `GEMINI_API_KEY is not set`으로 실패한다
   - 테스트 설정 파일에는 `ai.*`가 없어서 테스트는 기본적으로 Stub 모드다. Gemini 테스트는 `FakeGeminiServer`(localhost)를 쓰고 실제 Google 서버를 호출하지 않는다
@@ -115,6 +134,8 @@ CI (GitHub Actions):
 | `GeminiAiDescriptionClientTest` | `FakeGeminiServer`(JDK `HttpServer`, localhost)에 실제 HTTP 요청. 요청 형식, 파싱, 상태 코드별 예외, 타임아웃, 연결 실패 |
 | `AiClientSelectionTest` | `ApplicationContextRunner`. `ai.client` 값에 따라 구현체가 하나만 등록되는지, 키 없으면 시작 실패 |
 | `GeminiDescriptionIntegrationTest` | `@SpringBootTest` + H2 + `ai.client=gemini` + `FakeGeminiServer`. 전체 흐름과 오류별 상태 코드 |
+| `DescriptionReviewFlowIntegrationTest` | `@SpringBootTest` + H2. 등록 → 초안 생성(저장 안 됨) → 설명 저장 → 조회, 수정 시 설명 유지, 1000/1001자. Repository로 DB 확인 |
+| `FlywayMigrationTest` | `@SpringBootTest` + H2. V1·V2 적용 여부, `description` 컬럼 길이와 NULL 허용 |
 
 규칙:
 - 테스트 개수는 이 문서에 고정하지 않는다. 작업 전 `.\mvnw.cmd test`로 현재 결과(실행 개수, 실패 개수)를 기준으로 확인한다.

@@ -1,5 +1,7 @@
 package com.example.product_api;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -11,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -20,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -200,6 +204,124 @@ class ProductControllerTest {
 
         mockMvc.perform(delete("/products/99"))
             .andExpect(status().isNotFound());
+    }
+
+    // 응답은 ProductResponse라서 필드 순서가 id, name, price, description으로 고정된다
+    @Test
+    void getProductReturnsFieldsInOrderWithDescription() throws Exception {
+        Product keyboard = product(1L, "Keyboard", 50000);
+        keyboard.setDescription("타건감이 좋은 키보드입니다.");
+        when(productService.findById(1L)).thenReturn(keyboard);
+
+        mockMvc.perform(get("/products/1"))
+            .andExpect(status().isOk())
+            .andExpect(content().json(
+                "{\"id\":1,\"name\":\"Keyboard\",\"price\":50000,\"description\":\"타건감이 좋은 키보드입니다.\"}",
+                JsonCompareMode.STRICT))
+            .andExpect(content().string(startsWith("{\"id\":1,\"name\":\"Keyboard\",\"price\":50000,\"description\"")));
+    }
+
+    // 설명을 아직 저장하지 않은 상품은 description이 null로 나온다
+    @Test
+    void getProductReturnsNullDescriptionWhenNotSaved() throws Exception {
+        when(productService.findById(1L)).thenReturn(product(1L, "Keyboard", 50000));
+
+        mockMvc.perform(get("/products/1"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(containsString("\"description\":null")));
+    }
+
+    @Test
+    void updateDescriptionReturnsUpdatedProduct() throws Exception {
+        Product keyboard = product(1L, "Keyboard", 50000);
+        keyboard.setDescription("검토한 설명입니다.");
+        when(productService.updateDescription(1L, "검토한 설명입니다.")).thenReturn(keyboard);
+
+        mockMvc.perform(put("/products/1/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"검토한 설명입니다.\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(1))
+            .andExpect(jsonPath("$.name").value("Keyboard"))
+            .andExpect(jsonPath("$.price").value(50000))
+            .andExpect(jsonPath("$.description").value("검토한 설명입니다."));
+
+        verify(productService).updateDescription(1L, "검토한 설명입니다.");
+    }
+
+    @Test
+    void updateDescriptionAllows1000Characters() throws Exception {
+        String description = "가".repeat(1000);
+        Product keyboard = product(1L, "Keyboard", 50000);
+        keyboard.setDescription(description);
+        when(productService.updateDescription(1L, description)).thenReturn(keyboard);
+
+        mockMvc.perform(put("/products/1/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"" + description + "\"}"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void updateDescriptionRejects1001Characters() throws Exception {
+        mockMvc.perform(put("/products/1/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"" + "가".repeat(1001) + "\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.message").value("description must be at most 1000 characters"));
+
+        // 검증에서 막히므로 Service(DB)까지 가지 않는다
+        verifyNoInteractions(productService);
+    }
+
+    @Test
+    void updateDescriptionReturnsBadRequestForInvalidInput() throws Exception {
+        String[] invalidBodies = {
+            "{}",                          // description 누락
+            "{\"description\":null}",      // null
+            "{\"description\":\"\"}",      // 빈 문자열
+            "{\"description\":\"   \"}",   // 공백만
+            "{\"description\":"            // 깨진 JSON
+        };
+
+        for (String body : invalidBodies) {
+            mockMvc.perform(put("/products/1/description")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+        }
+
+        mockMvc.perform(put("/products/1/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"   \"}"))
+            .andExpect(jsonPath("$.message").value("description must not be blank"));
+
+        // 잘못된 요청은 Service까지 가지 않으므로 저장된 설명이 바뀌지 않는다
+        verifyNoInteractions(productService);
+    }
+
+    @Test
+    void updateDescriptionReturnsNotFoundWhenProductDoesNotExist() throws Exception {
+        when(productService.updateDescription(99L, "설명"))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
+
+        mockMvc.perform(put("/products/99/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"설명\"}"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.message").value("Product not found"));
+    }
+
+    @Test
+    void updateDescriptionRejectsNonNumericId() throws Exception {
+        mockMvc.perform(put("/products/abc/description")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"설명\"}"))
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(productService);
     }
 
     // DB에서 읽어 온 것처럼 id가 채워진 Product를 만든다

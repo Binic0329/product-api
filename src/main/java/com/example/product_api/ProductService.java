@@ -43,6 +43,14 @@ public class ProductService {
         return product;
     }
 
+    // 설명만 바꾸고 이름·가격은 그대로 둔다 (변경 감지로 UPDATE 실행)
+    @Transactional
+    public Product updateDescription(Long id, String description) {
+        Product product = findById(id);
+        product.setDescription(description);
+        return product;
+    }
+
     @Transactional
     public void delete(Long id) {
         Product product = findById(id);

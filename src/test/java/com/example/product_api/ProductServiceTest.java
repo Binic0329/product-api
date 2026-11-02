@@ -88,6 +88,38 @@ class ProductServiceTest {
             .satisfies(ex -> assertStatus(ex, HttpStatus.NOT_FOUND));
     }
 
+    // 상품 수정(이름·가격)은 저장된 설명을 지우지 않는다
+    @Test
+    void updateKeepsSavedDescription() {
+        Product keyboard = product(1L, "Keyboard", 50000);
+        keyboard.setDescription("검토한 설명입니다.");
+        when(productRepository.findById(1L)).thenReturn(Optional.of(keyboard));
+
+        Product updated = productService.update(1L, new ProductRequest("New Keyboard", 55000));
+
+        assertThat(updated.getName()).isEqualTo("New Keyboard");
+        assertThat(updated.getDescription()).isEqualTo("검토한 설명입니다.");
+    }
+
+    @Test
+    void updateDescriptionChangesOnlyDescription() {
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product(1L, "Keyboard", 50000)));
+
+        Product updated = productService.updateDescription(1L, "검토한 설명입니다.");
+
+        assertThat(updated.getDescription()).isEqualTo("검토한 설명입니다.");
+        assertThat(updated.getName()).isEqualTo("Keyboard");
+        assertThat(updated.getPrice()).isEqualTo(50000);
+    }
+
+    @Test
+    void updateDescriptionThrowsNotFoundWhenMissing() {
+        when(productRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> productService.updateDescription(99L, "설명"))
+            .satisfies(ex -> assertStatus(ex, HttpStatus.NOT_FOUND));
+    }
+
     @Test
     void deleteRemovesProduct() {
         Product keyboard = product(1L, "Keyboard", 50000);

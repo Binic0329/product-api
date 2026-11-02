@@ -39,7 +39,7 @@ AI가 구현 중 문제를 발견하면 **임의로 수정하지 않고 먼저 �
 
 AI가 "완료"라고 보고해도 아래 단계로 직접 확인했습니다.
 
-1. 자동화 테스트 실행 (현재 88개)
+1. 자동화 테스트 실행 (현재 107개)
 2. 실제 서버를 띄워 API 요청으로 상태 코드 확인
 3. MySQL에 직접 접속해 `SELECT`로 저장 결과 확인
 4. 서버 재시작 후에도 데이터가 유지되는지 확인
@@ -62,6 +62,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | Framework | Spring Boot 4.0.9 (Spring Web MVC, Validation) |
 | Database | MySQL 8.4 |
 | ORM | Spring Data JPA, Hibernate |
+| DB Migration | Flyway (`src/main/resources/db/migration`) |
 | Test | JUnit, Mockito, MockMvc, H2 (테스트 전용 메모리 DB) |
 | Build | Maven (Maven Wrapper 포함) |
 | CI | GitHub Actions (PR·push 시 전체 테스트 자동 실행) |
@@ -77,7 +78,33 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | POST | `/products` | 상품 등록 | 201 | 400 |
 | PUT | `/products/{id}` | 상품 수정 | 200 | 400, 404 |
 | DELETE | `/products/{id}` | 상품 삭제 | 204 | 404 |
-| POST | `/products/{id}/generate-description` | AI 상품 설명 생성 | 200 | 404, 502, 503, 504 |
+| POST | `/products/{id}/generate-description` | AI 상품 설명 초안 생성 (저장 안 함) | 200 | 404, 502, 503, 504 |
+| PUT | `/products/{id}/description` | 검토한 상품 설명 저장 | 200 | 400, 404 |
+
+**AI 설명 검토·저장 흐름 (Story 10)**
+
+AI가 만든 문장을 그대로 상품 정보로 쓰지 않고, 사람이 확인·수정한 뒤 저장합니다.
+
+```
+① POST /products                           상품 등록 (description = null)
+② POST /products/{id}/generate-description AI 초안 생성 → 응답만, DB 저장 안 함
+③ 사람이 초안을 확인하고 필요하면 수정        (api.http 등 API 클라이언트에서)
+④ PUT  /products/{id}/description          검토한 설명 저장
+⑤ GET  /products/{id}                      저장된 설명과 함께 조회
+```
+
+**상품 응답 형식** (모든 상품 API 공통, `ProductResponse`)
+
+```json
+{
+  "id": 1,
+  "name": "Wireless Mouse",
+  "price": 25000,
+  "description": "가볍게 쓰기 좋은 무선 마우스입니다."
+}
+```
+
+설명을 저장하지 않은 상품은 `"description": null`입니다.
 
 **요청 본문 (POST, PUT)**
 
@@ -91,8 +118,20 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 - `id`는 DB가 자동으로 생성합니다. 요청 본문에 `id`가 포함되면 400을 반환합니다.
 - `name`: 필수, 공백만 있는 값 불가, 최대 255자
 - `price`: 필수, 0 이상
+- 상품 등록·수정으로는 설명을 바꿀 수 없습니다. 이름·가격을 수정해도 저장된 설명은 유지됩니다.
 
-**AI 상품 설명 생성 (`POST /products/{id}/generate-description`)**
+**설명 저장 (`PUT /products/{id}/description`)**
+
+```json
+{
+  "description": "가볍게 쓰기 좋은 무선 마우스입니다."
+}
+```
+
+- `description`: 필수, 공백만 있는 값 불가, 최대 1000자 (DB 컬럼 `VARCHAR(1000)`)
+- 다시 저장하면 이전 설명을 덮어씁니다 (이력은 남기지 않음)
+
+**AI 상품 설명 초안 생성 (`POST /products/{id}/generate-description`)**
 
 상품 이름과 가격만으로 한국어 설명(1~3문장)을 생성합니다.
 요청 본문은 없으며, 생성한 설명은 응답으로만 돌려주고 DB에는 저장하지 않습니다.
@@ -143,6 +182,8 @@ src/main/java/com/example/product_api
 ├── ProductRepository.java      # DB 접근 (Spring Data JPA)
 ├── Product.java                # Entity (products 테이블)
 ├── ProductRequest.java         # 요청 DTO + 검증 규칙
+├── ProductResponse.java        # 상품 응답 DTO (id, name, price, description)
+├── ProductDescriptionRequest.java    # 설명 저장 요청 DTO + 검증 규칙
 ├── GlobalExceptionHandler.java # 전역 예외 처리
 ├── ApiErrorResponse.java       # 오류 응답 형식
 ├── ProductDescriptionController.java # AI 상품 설명 생성 API
@@ -152,6 +193,10 @@ src/main/java/com/example/product_api
 ├── StubAiDescriptionClient.java      # 실제 호출 없는 Stub 구현 (Story 8, 기본값)
 ├── GeminiAiDescriptionClient.java    # Google Gemini API 구현 (Story 9)
 └── AiClientException.java, AiUnavailableException.java, AiTimeoutException.java # AI 실패 / 한도 초과 / 응답 지연
+
+src/main/resources/db/migration
+├── V1__create_products_table.sql      # 기존 products 테이블 (id, name, price)
+└── V2__add_product_description.sql    # description VARCHAR(1000) NULL 추가 (Story 10)
 ```
 
 요청 흐름: `Controller → Service → Repository → MySQL`
@@ -193,7 +238,9 @@ DB 계정 정보는 소스 코드에 저장하지 않고 환경 변수로 전달
 .\mvnw.cmd spring-boot:run
 ```
 
-- `spring-boot:run`으로 실행하면 `local` 프로필이 적용되어, Entity를 기준으로 테이블이 자동 생성됩니다 (`ddl-auto=update`, 로컬 개발 전용).
+- 테이블은 **Flyway**가 `db/migration`의 SQL 파일(V1, V2 ...)을 순서대로 적용해 만들고 바꿉니다. 서버를 시작할 때 아직 적용되지 않은 파일만 실행합니다.
+- Hibernate는 테이블을 바꾸지 않고, Entity와 테이블이 맞는지만 검사합니다 (`ddl-auto=validate`). 맞지 않으면 서버가 시작되지 않습니다.
+- 빈 DB라면 처음 실행할 때 V1, V2가 모두 적용됩니다. Story 9 이전에 만든 기존 DB는 아래 "기존 DB를 Flyway로 전환"을 먼저 진행해야 합니다.
 - 기본 포트는 `8080`이며, `api.http`에 확인용 요청이 정리되어 있습니다 (VS Code REST Client).
 - 아무 설정 없이 실행하면 AI 설명 생성은 **Stub 모드**로 동작합니다 (API 키 불필요).
 
@@ -223,6 +270,23 @@ AI_CLIENT=gemini GEMINI_API_KEY=<발급받은 키> ./mvnw spring-boot:run
 - 키는 URL이 아닌 `x-goog-api-key` 헤더로 보내며, 코드·설정 파일·로그·테스트에 남기지 않습니다.
 - 무료 등급은 분당·일일 요청 수 제한이 있습니다. 한도를 넘으면 Gemini가 429를 돌려주고, 이 API는 503 `AI service unavailable`로 응답합니다. 정확한 한도는 Google AI Studio의 안내를 확인하세요.
 
+### 5. 기존 DB를 Flyway로 전환 (Story 9 이전에 만든 DB, 한 번만)
+
+Story 9까지는 Hibernate가 `products` 테이블을 만들었기 때문에, Flyway의 기록 테이블(`flyway_schema_history`)이 없습니다.
+이런 DB에서 그냥 서버를 켜면 Flyway가 **"기록 없이 데이터가 있는 DB"로 판단해 시작을 거부**합니다 (`spring.flyway.baseline-on-migrate=false`, 실수로 다른 DB를 바꾸지 않도록 하는 안전장치).
+
+1. 백업: `mysqldump -u product_user -p product_api > product_api_backup.sql`
+2. 현재 테이블이 V1과 같은지 확인: `SHOW CREATE TABLE products;` (`id BIGINT AUTO_INCREMENT`, `name VARCHAR(255) NOT NULL`, `price INT NOT NULL`)
+3. **이번 한 번만** baseline 옵션을 켜고 실행합니다. 기존 테이블을 V1로 기록하고 V2(description 컬럼 추가)만 적용합니다.
+   ```powershell
+   $env:SPRING_FLYWAY_BASELINE_ON_MIGRATE = "true"
+   .\mvnw.cmd spring-boot:run
+   ```
+4. 확인 후 옵션을 지웁니다: `Remove-Item Env:SPRING_FLYWAY_BASELINE_ON_MIGRATE`
+5. 확인: `SELECT version, description, success FROM flyway_schema_history;` (1 = baseline, 2 = add product description), `DESCRIBE products;`
+
+> 한 번 적용된 마이그레이션 파일(V1, V2)은 수정하지 않습니다. 테이블 변경이 필요하면 새 버전 파일(V3 ...)을 추가합니다.
+
 ## 테스트
 
 ```bash
@@ -236,14 +300,15 @@ AI_CLIENT=gemini GEMINI_API_KEY=<발급받은 키> ./mvnw spring-boot:run
 ```
 
 테스트는 MySQL이나 환경 변수 없이 H2 메모리 DB로 실행됩니다 (`src/test/resources/application.properties`).
+테스트 DB의 테이블도 실제 서버와 같은 Flyway 마이그레이션(V1, V2)으로 만들어집니다.
 
 `main` 브랜치 대상 PR을 만들거나 `main`에 push하면 GitHub Actions가 같은 테스트를 자동으로 실행합니다 (`.github/workflows/ci.yml`).
 결과는 PR의 Checks 또는 저장소의 Actions 탭에서 확인할 수 있습니다.
 
 | 테스트 | 방식 | 검증 내용 |
 |---|---|---|
-| `ProductServiceTest` | Mockito (가짜 Repository) | 조회·등록·수정·삭제, 404 처리 |
-| `ProductControllerTest` | MockMvc + 가짜 Service | 상태 코드, 입력값 검증 |
+| `ProductServiceTest` | Mockito (가짜 Repository) | 조회·등록·수정·삭제, 404 처리, 설명 저장, 수정 시 설명 유지 |
+| `ProductControllerTest` | MockMvc + 가짜 Service | 상태 코드, 입력값 검증, 응답 필드 순서, 설명 1000자 허용 / 1001자 거부 |
 | `GlobalExceptionHandlerTest` | MockMvc | 오류 응답 형식, 내부 정보 비노출 |
 | `ProductApiIntegrationTest` | Spring Boot + H2 | Controller부터 DB까지 실제 저장·수정·삭제 |
 | `StubAiDescriptionClientTest` | 단위 테스트 | Stub 설명 문구, 가격 쉼표 형식, 경계값 |
@@ -253,6 +318,8 @@ AI_CLIENT=gemini GEMINI_API_KEY=<발급받은 키> ./mvnw spring-boot:run
 | `GeminiAiDescriptionClientTest` | 가짜 Gemini 서버 (localhost) | 요청 형식(모델 경로, 키 헤더, 프롬프트), 응답 파싱, 401/403/5xx·429·타임아웃·연결 실패·잘못된 응답 구분 |
 | `AiClientSelectionTest` | Spring 컨텍스트 | 설정에 따라 Stub/Gemini 중 하나만 등록, 키 없으면 시작 실패 |
 | `GeminiDescriptionIntegrationTest` | Spring Boot + H2 + 가짜 Gemini 서버 | Gemini 모드에서 Controller부터 Gemini 호출까지 연결, 오류별 상태 코드 |
+| `DescriptionReviewFlowIntegrationTest` | Spring Boot + H2 | 등록 → 초안 생성(저장 안 됨) → 검토한 설명 저장 → 조회, 수정 시 설명 유지 |
+| `FlywayMigrationTest` | Spring Boot + H2 | V1·V2 적용, `description` 컬럼(VARCHAR(1000), NULL 허용) |
 
 AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 Gemini 서버를 사용하므로, CI에서도 API 키 없이 실행됩니다.
 
@@ -271,11 +338,16 @@ AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 G
 | 7 | POST 성공 시 201 Created 반환, 상품명 최대 255자 검증 (DB 컬럼보다 긴 이름이 500을 내던 문제를 400으로 수정) |
 | 8 | AI 상품 설명 생성 API (AI 호출 인터페이스 분리, Stub 구현, 502/504 오류 처리) |
 | 9 | Google Gemini API 실제 연동, Stub/Gemini 설정 전환, 429를 503으로 처리, 연결·응답 타임아웃 |
-| 10 | Docker, 배포 — 예정 |
+| 10 | AI 설명 검토 후 저장 (`PUT /products/{id}/description`), 상품 응답 DTO(`ProductResponse`) 도입, Flyway로 스키마 관리 전환 |
+| 11 | Dockerfile + Docker Compose — 예정 |
+| 12 | 배포, AI API 호출 보호, 최종 검증 — 예정 |
 
 > Story 1~6은 Git 도입 전에 진행했으며, 그 결과가 첫 커밋에 포함되어 있습니다.
 > 이후 변경 사항은 Story 단위로 기록합니다.
 
-> Story 9는 원래 AWS Bedrock 연동으로 계획했으나, 신규 AWS 계정 확인이 정해 둔 기한(2026-10-31)까지 끝나지 않아
+> Story 9는 원래 AWS Bedrock 연동으로 계획했으나, 신규 AWS 계정 확인이 정해 둔 기한까지 끝나지 않아
 > Google Gemini API로 먼저 구현했습니다. Story 8에서 AI 호출부를 인터페이스로 분리해 두었기 때문에,
 > 기존 Service·Controller는 거의 그대로 두고 구현체만 추가하는 방식으로 대응할 수 있었습니다.
+
+> Story 10에서는 AI가 생성한 설명을 바로 저장하지 않고, 사람이 검토·수정한 뒤 저장하도록 생성(미리보기)과 저장 API를 분리했습니다.
+> AI 출력이 그대로 상품 정보가 되지 않게 하기 위한 설계입니다.

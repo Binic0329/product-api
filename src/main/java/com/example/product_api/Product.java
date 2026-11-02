@@ -23,6 +23,10 @@ public class Product {
     @Column(nullable = false)
     private Integer price;
 
+    // 사람이 검토한 AI 상품 설명 (Story 10). 상품 등록·수정으로는 바뀌지 않고 설명 저장 API로만 바뀐다
+    @Column(length = 1000)
+    private String description;
+
     // JPA가 DB에서 읽어 온 값으로 객체를 만들 때 사용하는 기본 생성자
     protected Product() {
 
@@ -45,6 +49,10 @@ public class Product {
         return price;
     }
 
+    public String getDescription() {
+        return description;
+    }
+
     // id는 DB가 정하므로 setId는 두지 않는다
     public void setName(String name) {
         this.name = name;
@@ -52,5 +60,9 @@ public class Product {
 
     public void setPrice(Integer price) {
         this.price = price;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
     }
 }

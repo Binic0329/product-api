@@ -25,28 +25,40 @@ public class ProductController {
         this.productService = productService;
     }
 
+    // 응답은 Entity 대신 ProductResponse로 바꿔서 돌려준다
     @GetMapping
-    public List<Product> getProducts() {
-        return productService.findAll();
+    public List<ProductResponse> getProducts() {
+        return productService.findAll().stream()
+            .map(ProductResponse::from)
+            .toList();
     }
 
     @GetMapping("/{id}")
-    public Product getProduct(@PathVariable Long id) {
-        return productService.findById(id);
+    public ProductResponse getProduct(@PathVariable Long id) {
+        return ProductResponse.from(productService.findById(id));
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Product createProduct(@Valid @RequestBody ProductRequest request) {
-        return productService.create(request);
+    public ProductResponse createProduct(@Valid @RequestBody ProductRequest request) {
+        return ProductResponse.from(productService.create(request));
     }
 
     @PutMapping("/{id}")
-    public Product updateProduct(
+    public ProductResponse updateProduct(
         @PathVariable Long id,
         @Valid @RequestBody ProductRequest request
     ) {
-        return productService.update(id, request);
+        return ProductResponse.from(productService.update(id, request));
+    }
+
+    // 사람이 검토·수정한 설명을 저장한다. AI 초안 생성(generate-description)은 저장하지 않는다
+    @PutMapping("/{id}/description")
+    public ProductResponse updateDescription(
+        @PathVariable Long id,
+        @Valid @RequestBody ProductDescriptionRequest request
+    ) {
+        return ProductResponse.from(productService.updateDescription(id, request.getDescription()));
     }
 
     @DeleteMapping("/{id}")

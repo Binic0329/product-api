@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### DB 백업 (실제 데이터가 들어 있으므로 Git에 올리지 않음) ###
+*_backup.sql
+*.sql.gz
