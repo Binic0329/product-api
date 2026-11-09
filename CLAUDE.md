@@ -13,6 +13,7 @@
 - Java 21, Spring Boot 4.0.9, Maven (Maven Wrapper 사용)
 - spring-boot-starter-webmvc, spring-boot-starter-validation, spring-boot-starter-data-jpa (Hibernate)
 - MySQL 8.4 (mysql-connector-j, runtime)
+- Flyway (spring-boot-starter-flyway, flyway-mysql)
 - 테스트: spring-boot-starter-webmvc-test (JUnit, Mockito, MockMvc), H2 (test 전용)
 
 ## 구조
@@ -31,7 +32,7 @@
 | `GlobalExceptionHandler` | `@RestControllerAdvice`. 모든 오류를 `ApiErrorResponse` 형식으로 변환 |
 | `ApiErrorResponse` | 오류 응답 record `{status, message}` |
 | `ProductDescriptionController` | `POST /products/{id}/generate-description`. `ProductController`와 분리해 CRUD 코드·테스트를 건드리지 않는다 |
-| `ProductDescriptionService` | 상품 조회(404 재사용) → AI 호출 → AI 예외를 502/503/504로 변환. 느린 AI 호출 중 트랜잭션을 잡지 않도록 `@Transactional`을 붙이지 않는다 |
+| `ProductDescriptionService` | 상품 조회(404 재사용) → AI 호출 → AI 예외를 502/503/504로 변환. 느린 AI 호출 중 DB 연결을 잡지 않도록 `@Transactional`을 붙이지 않고 `spring.jpa.open-in-view=false`를 유지한다 |
 | `AiDescriptionClient` | AI 호출 인터페이스. 구현체는 HTTP·SDK 예외를 `AiClientException`/`AiUnavailableException`/`AiTimeoutException`으로 바꿔 던진다 |
 | `StubAiDescriptionClient` | 실제 호출 없이 고정 문구를 돌려주는 구현체 (Story 8). `ai.client`가 없거나 `stub`일 때 등록 |
 | `GeminiAiDescriptionClient` | Gemini `generateContent` REST 호출 (Story 9). `ai.client=gemini`일 때만 등록. `RestClient` + JDK HttpClient 타임아웃, 키는 `x-goog-api-key` 헤더 |
@@ -66,7 +67,7 @@
 설명 생성 (`/generate-description`):
 - 요청 본문 없음. 응답 `{"productId": 1, "description": "..."}`, DB에 저장하지 않으므로 201이 아닌 200
 - 없는 상품이면 AI를 호출하지 않고 404
-- `AiClientException`(오류 상태 코드, 연결 실패, 응답 구조 이상), AI 응답이 `null`/빈 문자열/공백만: 502 `AI service error`
+- `AiClientException`(오류 상태 코드, 연결 실패, 응답 구조 이상, `finishReason`이 있는데 `STOP`이 아님), AI 응답이 `null`/빈 문자열/공백만: 502 `AI service error`
 - `AiUnavailableException`(Gemini 429): 503 `AI service unavailable`
 - `AiTimeoutException`: 504 `AI service timeout`
 - 그 밖의 예외는 502로 감추지 않는다 (기존 규칙대로 500)
@@ -89,7 +90,7 @@
 
 ## 설정과 실행
 
-- `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=validate`
+- `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=validate`, `spring.jpa.open-in-view=false`(켜면 AI 대기 중 DB 연결을 점유한다. 테스트 설정도 같은 값)
 - `src/main/resources/application-local.properties`: `ddl-auto=validate` (Story 10부터 로컬에서도 Hibernate가 테이블을 바꾸지 않는다)
 - `local` 프로필은 pom.xml의 spring-boot-maven-plugin 설정으로 `spring-boot:run`에서만 적용된다. 테스트에는 적용되지 않는다
 - `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=validate`, 테이블은 Flyway가 만든다. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
@@ -131,7 +132,7 @@ CI (GitHub Actions):
 | `ProductDescriptionServiceTest` | Mockito로 가짜 `ProductService`·`AiDescriptionClient` 주입. 404 시 AI 미호출, 502/503/504 변환, 빈 응답 502 |
 | `ProductDescriptionControllerTest` | MockMvc standaloneSetup. 상태 코드와 오류 형식, AI 내부 메시지 비노출 |
 | `ProductDescriptionIntegrationTest` | `@SpringBootTest` + H2 + 실제 Stub. 응답 확인 후 Repository로 DB가 바뀌지 않았는지 확인 |
-| `GeminiAiDescriptionClientTest` | `FakeGeminiServer`(JDK `HttpServer`, localhost)에 실제 HTTP 요청. 요청 형식, 파싱, 상태 코드별 예외, 타임아웃, 연결 실패 |
+| `GeminiAiDescriptionClientTest` | `FakeGeminiServer`(JDK `HttpServer`, localhost)에 실제 HTTP 요청. 요청 형식, 파싱, 상태 코드별 예외, 타임아웃, 연결 실패, 잘린 응답 |
 | `AiClientSelectionTest` | `ApplicationContextRunner`. `ai.client` 값에 따라 구현체가 하나만 등록되는지, 키 없으면 시작 실패 |
 | `GeminiDescriptionIntegrationTest` | `@SpringBootTest` + H2 + `ai.client=gemini` + `FakeGeminiServer`. 전체 흐름과 오류별 상태 코드 |
 | `DescriptionReviewFlowIntegrationTest` | `@SpringBootTest` + H2. 등록 → 초안 생성(저장 안 됨) → 설명 저장 → 조회, 수정 시 설명 유지, 1000/1001자. Repository로 DB 확인 |

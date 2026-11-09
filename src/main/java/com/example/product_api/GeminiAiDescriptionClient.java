@@ -119,9 +119,15 @@ public class GeminiAiDescriptionClient implements AiDescriptionClient {
                 : null;
             throw new AiClientException("Gemini response has no candidates (blockReason=" + blockReason + ")");
         }
-        Content content = response.candidates().get(0).content();
+        Candidate candidate = response.candidates().get(0);
+        Content content = candidate.content();
         if (content == null || content.parts() == null || content.parts().isEmpty()) {
             throw new AiClientException("Gemini response has no content parts");
+        }
+        // STOP이 아닌 이유로 멈춘 응답은 문장이 잘렸을 수 있으므로 쓰지 않는다 (finishReason이 없는 응답은 허용)
+        String finishReason = candidate.finishReason();
+        if (finishReason != null && !"STOP".equals(finishReason)) {
+            throw new AiClientException("Gemini response was not completed (finishReason=" + finishReason + ")");
         }
         return content.parts().stream()
             .map(Part::text)
