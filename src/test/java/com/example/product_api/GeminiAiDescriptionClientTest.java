@@ -147,6 +147,18 @@ class GeminiAiDescriptionClientTest {
             .isExactlyInstanceOf(AiClientException.class);
     }
 
+        // 글자가 있어도 끝까지 쓰지 못하고 멈춘 응답은 쓸 수 없는 응답이다 (502)
+    @Test
+    void truncatedTextBecomesAiClientException() {
+        server.respond(200, """
+            {"candidates":[{"content":{"parts":[{"text":"가볍게 쓰기 좋은"}]},"finishReason":"MAX_TOKENS"}]}
+            """);
+
+        assertThatThrownBy(() -> client.generate("Keyboard", 50000))
+            .isExactlyInstanceOf(AiClientException.class)
+            .hasMessageContaining("MAX_TOKENS");
+    }
+
     @Test
     void nonJsonResponseBecomesAiClientException() {
         server.respond(200, "<html>not json</html>");

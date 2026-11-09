@@ -38,7 +38,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, message);
     }
 
-    // JSON 문법 오류, 타입 불일치, int 필드(id) 누락 등 본문을 읽지 못한 경우
+    // JSON 문법 오류, 타입 불일치 등 본문을 읽지 못한 경우
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(
         HttpMessageNotReadableException ex,
@@ -49,7 +49,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "Malformed JSON request or missing required field");
     }
 
-    // 그 밖의 Spring 예외와 ResponseStatusException(404, 409 등)이 모두 여기로 모인다
+    // 그 밖의 Spring 예외와 ResponseStatusException(404, 502, 503, 504 등)이 모두 여기로 모인다
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(
         Exception ex,

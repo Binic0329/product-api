@@ -39,7 +39,7 @@ AI가 구현 중 문제를 발견하면 **임의로 수정하지 않고 먼저 �
 
 AI가 "완료"라고 보고해도 아래 단계로 직접 확인했습니다.
 
-1. 자동화 테스트 실행 (현재 107개)
+1. 자동화 테스트 실행 (현재 108개)
 2. 실제 서버를 띄워 API 요청으로 상태 코드 확인
 3. MySQL에 직접 접속해 `SELECT`로 저장 결과 확인
 4. 서버 재시작 후에도 데이터가 유지되는지 확인
@@ -153,7 +153,7 @@ AI 구현체는 설정(`AI_CLIENT` 환경 변수)으로 고릅니다. 기본값�
 | 상황 | 상태 코드 | message |
 |---|---|---|
 | 없는 상품 (AI 호출 안 함) | 404 | `Product not found` |
-| AI 오류 응답(인증 실패, 5xx 등), 연결 실패, 빈 응답, 잘못된 응답 구조 | 502 | `AI service error` |
+| AI 오류 응답(인증 실패, 5xx 등), 연결 실패, 빈 응답, 잘못된 응답 구조, 끝까지 생성되지 않은 응답(`finishReason`이 `STOP`이 아님) | 502 | `AI service error` |
 | AI 요청 한도 초과 (Gemini 429) | 503 | `AI service unavailable` |
 | AI 응답 지연 (타임아웃) | 504 | `AI service timeout` |
 
@@ -186,6 +186,7 @@ src/main/java/com/example/product_api
 ├── ProductDescriptionRequest.java    # 설명 저장 요청 DTO + 검증 규칙
 ├── GlobalExceptionHandler.java # 전역 예외 처리
 ├── ApiErrorResponse.java       # 오류 응답 형식
+├── HelloController.java        # GET /hello 학습용 엔드포인트 (상품 API와 무관)
 ├── ProductDescriptionController.java # AI 상품 설명 생성 API
 ├── ProductDescriptionService.java    # 상품 조회 → AI 호출 → AI 오류를 502/503/504로 변환
 ├── ProductDescriptionResponse.java   # 설명 생성 응답 DTO
@@ -315,7 +316,7 @@ Story 9까지는 Hibernate가 `products` 테이블을 만들었기 때문에, Fl
 | `ProductDescriptionServiceTest` | Mockito (가짜 Service, 가짜 AI) | 404 시 AI 미호출, AI 실패 502, 한도 초과 503, 지연 504, 빈 응답 502 |
 | `ProductDescriptionControllerTest` | MockMvc + 가짜 Service | 상태 코드, 오류 형식, AI 내부 메시지 비노출 |
 | `ProductDescriptionIntegrationTest` | Spring Boot + H2 (Stub 모드) | 설명 생성 후 DB가 바뀌지 않았는지 확인 |
-| `GeminiAiDescriptionClientTest` | 가짜 Gemini 서버 (localhost) | 요청 형식(모델 경로, 키 헤더, 프롬프트), 응답 파싱, 401/403/5xx·429·타임아웃·연결 실패·잘못된 응답 구분 |
+| `GeminiAiDescriptionClientTest` | 가짜 Gemini 서버 (localhost) | 요청 형식(모델 경로, 키 헤더, 프롬프트), 응답 파싱, 401/403/5xx·429·타임아웃·연결 실패·잘못된 응답·잘린 응답 구분 |
 | `AiClientSelectionTest` | Spring 컨텍스트 | 설정에 따라 Stub/Gemini 중 하나만 등록, 키 없으면 시작 실패 |
 | `GeminiDescriptionIntegrationTest` | Spring Boot + H2 + 가짜 Gemini 서버 | Gemini 모드에서 Controller부터 Gemini 호출까지 연결, 오류별 상태 코드 |
 | `DescriptionReviewFlowIntegrationTest` | Spring Boot + H2 | 등록 → 초안 생성(저장 안 됨) → 검토한 설명 저장 → 조회, 수정 시 설명 유지 |
