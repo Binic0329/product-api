@@ -66,6 +66,7 @@ AI는 값이 아닌 **설정 여부만** 확인하도록 했습니다.
 | Test | JUnit, Mockito, MockMvc, H2 (테스트 전용 메모리 DB) |
 | Build | Maven (Maven Wrapper 포함) |
 | CI | GitHub Actions (PR·push 시 전체 테스트 자동 실행) |
+| Container | Docker, Docker Compose (앱 + MySQL) |
 | AI API | Google Gemini API (`gemini-3.5-flash-lite`, `generateContent` REST, Spring `RestClient`) |
 | AI Tool | Claude Code |
 
@@ -198,6 +199,12 @@ src/main/java/com/example/product_api
 src/main/resources/db/migration
 ├── V1__create_products_table.sql      # 기존 products 테이블 (id, name, price)
 └── V2__add_product_description.sql    # description VARCHAR(1000) NULL 추가 (Story 10)
+
+(프로젝트 루트, Story 11)
+├── Dockerfile      # 멀티 스테이지 빌드 (JDK로 jar 빌드 → JRE로 실행)
+├── compose.yaml    # 앱 + MySQL 함께 실행
+├── .env.example    # Compose용 환경 변수 양식 (실제 값은 .env, Git 제외)
+└── .dockerignore   # 이미지 빌드에서 제외할 파일
 ```
 
 요청 흐름: `Controller → Service → Repository → MySQL`
@@ -288,6 +295,26 @@ Story 9까지는 Hibernate가 `products` 테이블을 만들었기 때문에, Fl
 
 > 한 번 적용된 마이그레이션 파일(V1, V2)은 수정하지 않습니다. 테이블 변경이 필요하면 새 버전 파일(V3 ...)을 추가합니다.
 
+### 6. Docker Compose로 실행 (Story 11)
+
+Java·MySQL 설치 없이 Docker만으로 앱과 MySQL을 함께 띄웁니다. Docker Desktop이 실행 중이어야 합니다.
+
+1. `.env.example`을 `.env`로 복사하고 `DB_USERNAME`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`를 채웁니다 (`.env`는 Git에 올라가지 않습니다). `DB_USERNAME`에는 `root`를 쓸 수 없습니다.
+2. 실행·종료
+   ```powershell
+   docker compose up --build -d   # 빌드 후 백그라운드 실행 → http://localhost:8080
+   docker compose logs -f app     # 앱 로그 보기
+   docker compose down            # 종료 (데이터는 볼륨에 남음)
+   ```
+
+- 컨테이너 MySQL은 **로컬 MySQL과 별개인 새 DB**입니다. 처음 실행할 때 Flyway가 V1·V2를 적용하며, 로컬 MySQL의 데이터는 옮겨지지도 바뀌지도 않습니다.
+- MySQL 포트는 호스트에 열지 않습니다 (로컬 MySQL 3306과 충돌 방지). DB를 직접 보려면 `docker compose exec db mysql -u <DB_USERNAME> -p product_api`를 씁니다.
+- 앱은 MySQL healthcheck가 통과한 뒤에 시작합니다. 이미지 빌드 때 테스트는 건너뜁니다 (테스트는 CI와 `mvnw test`가 담당).
+- **터미널에 설정된 환경 변수가 `.env`보다 우선**합니다. PowerShell에 `DB_USERNAME`·`DB_PASSWORD`가 이미 있으면 그 값이 쓰입니다.
+- DB 계정은 **볼륨이 비어 있을 때 처음 한 번만** 만들어집니다. 나중에 `.env`의 비밀번호를 바꾸면 앱이 접속하지 못합니다. 이때는 `docker compose down -v`로 볼륨을 지우고 다시 시작합니다 (**컨테이너 DB의 데이터가 모두 삭제됨**).
+- `spring-boot:run`과 Compose는 둘 다 8080을 씁니다. 동시에 띄우려면 `.env`에 `APP_PORT=18080`처럼 다른 포트를 지정합니다.
+- Gemini 모드는 `.env`에 `AI_CLIENT=gemini`, `GEMINI_API_KEY`를 적습니다. 기본값은 Stub입니다.
+
 ## 테스트
 
 ```bash
@@ -340,7 +367,7 @@ AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 G
 | 8 | AI 상품 설명 생성 API (AI 호출 인터페이스 분리, Stub 구현, 502/504 오류 처리) |
 | 9 | Google Gemini API 실제 연동, Stub/Gemini 설정 전환, 429를 503으로 처리, 연결·응답 타임아웃 |
 | 10 | AI 설명 검토 후 저장 (`PUT /products/{id}/description`), 상품 응답 DTO(`ProductResponse`) 도입, Flyway로 스키마 관리 전환 |
-| 11 | Dockerfile + Docker Compose — 예정 |
+| 11 | Dockerfile(멀티 스테이지, non-root 실행) + Docker Compose(앱 + MySQL, healthcheck, 볼륨), 계정은 `.env`로 분리 |
 | 12 | AI 설명 품질 측정과 프롬프트 개선 — 예정 |
 | 13 | AI API 호출 보호 (호출 횟수 제한, 사용량 기록) — 예정 |
 

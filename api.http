@@ -1,6 +1,6 @@
 @baseUrl = http://localhost:8080
 
-# 서버 실행: .\mvnw.cmd spring-boot:run  (local 프로필 + MySQL)
+# 서버 실행: .\mvnw.cmd spring-boot:run (로컬 MySQL) 또는 docker compose up --build -d (컨테이너 MySQL). 둘 다 8080이라 하나만 켠다
 # id는 DB가 자동으로 정하므로 요청 본문에 id를 넣지 않는다.
 # {{createdProduct.response.body.$.id}} 처럼 앞 요청의 응답에서 id를 꺼내 쓴다.
 #  → [정상 1]을 먼저 실행해야 그 id를 쓰는 요청들이 동작한다.

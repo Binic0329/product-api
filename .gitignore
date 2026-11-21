@@ -38,3 +38,6 @@ build/
 
 ### Claude Code 개인 설정 (알림음 hook 등, 공유하지 않음) ###
 .claude/settings.local.json
+
+### Docker Compose 계정 값 (.env.example만 커밋) ###
+.env

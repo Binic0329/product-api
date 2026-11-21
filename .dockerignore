@@ -1,0 +1,10 @@
+# 이미지 빌드에 필요한 것은 .mvn, mvnw, pom.xml, src 뿐
+target/
+.git/
+.github/
+.claude/
+.vscode/
+docs/
+.env
+*.sql
+*.sql.gz
