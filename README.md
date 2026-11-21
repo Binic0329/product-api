@@ -341,7 +341,8 @@ AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 G
 | 9 | Google Gemini API 실제 연동, Stub/Gemini 설정 전환, 429를 503으로 처리, 연결·응답 타임아웃 |
 | 10 | AI 설명 검토 후 저장 (`PUT /products/{id}/description`), 상품 응답 DTO(`ProductResponse`) 도입, Flyway로 스키마 관리 전환 |
 | 11 | Dockerfile + Docker Compose — 예정 |
-| 12 | 배포, AI API 호출 보호, 최종 검증 — 예정 |
+| 12 | AI 설명 품질 측정과 프롬프트 개선 — 예정 |
+| 13 | AI API 호출 보호 (호출 횟수 제한, 사용량 기록) — 예정 |
 
 > Story 1~6은 Git 도입 전에 진행했으며, 그 결과가 첫 커밋에 포함되어 있습니다.
 > 이후 변경 사항은 Story 단위로 기록합니다.
