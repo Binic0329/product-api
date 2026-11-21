@@ -1,0 +1,36 @@
+# 앱 + MySQL 실행: docker compose up --build
+# 계정 값은 .env(Git 제외) 또는 환경 변수로 받는다. 형식은 .env.example 참고
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: product_api
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME is not set}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is not set}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is not set}
+    volumes:
+      - db-data:/var/lib/mysql
+    # 포트를 호스트에 열지 않는다 (로컬 MySQL 3306과 충돌 방지, 앱만 내부망으로 접속)
+    healthcheck:
+      # 127.0.0.1(TCP)로 확인: 초기화 중 임시 서버(소켓 전용)를 준비 완료로 착각하지 않기 위함
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/product_api
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      AI_CLIENT: ${AI_CLIENT:-stub}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  db-data:

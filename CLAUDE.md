@@ -15,6 +15,7 @@
 - MySQL 8.4 (mysql-connector-j, runtime)
 - Flyway (spring-boot-starter-flyway, flyway-mysql)
 - 테스트: spring-boot-starter-webmvc-test (JUnit, Mockito, MockMvc), H2 (test 전용)
+- 실행 환경(선택): Docker, Docker Compose (`eclipse-temurin:21`, `mysql:8.4`)
 
 ## 구조
 
@@ -91,8 +92,13 @@
 ## 설정과 실행
 
 - `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=validate`, `spring.jpa.open-in-view=false`(켜면 AI 대기 중 DB 연결을 점유한다. 테스트 설정도 같은 값)
-- `src/main/resources/application-local.properties`: `ddl-auto=validate` (Story 10부터 로컬에서도 Hibernate가 테이블을 바꾸지 않는다)
-- `local` 프로필은 pom.xml의 spring-boot-maven-plugin 설정으로 `spring-boot:run`에서만 적용된다. 테스트에는 적용되지 않는다
+- 프로필별 설정 파일은 없다 (Story 11에서 기본값과 같던 `application-local.properties`와 pom.xml의 `local` 프로필 설정을 제거)
+
+Docker (Story 11):
+- `Dockerfile`(멀티 스테이지, `-DskipTests`, non-root `app` 사용자), `compose.yaml`(`db` = `mysql:8.4` + 볼륨 `db-data` + healthcheck, `app`은 `SPRING_DATASOURCE_URL`로 `db`에 접속), `.dockerignore`
+- 계정은 `.env`(Git 제외)로 받는다. 커밋하는 것은 값이 빈 `.env.example`뿐이다. `.env`를 읽거나 만들지 않는다
+- MySQL 포트는 호스트에 열지 않는다 (사용자의 로컬 MySQL이 3306 사용). 앱 호스트 포트는 `APP_PORT`(기본 8080)
+- 확인용 실행은 사용자의 스택과 겹치지 않게 `docker compose -p product-api-verify`, `APP_PORT=18080`, 그 명령 안에서만 쓰는 임시 계정으로 하고, 끝나면 `down -v`로 확인용 볼륨까지 지운다. 사용자 프로젝트(`product-api`)의 볼륨은 `down -v` 하지 않는다 (데이터 삭제 = 위험한 작업)
 - `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=validate`, 테이블은 Flyway가 만든다. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
 
 DB 스키마 (Flyway, Story 10):
@@ -108,6 +114,7 @@ DB 스키마 (Flyway, Story 10):
 
 명령어 (Windows PowerShell 기준):
 - 서버 실행: `.\mvnw.cmd spring-boot:run`
+- Docker로 실행: `docker compose up --build -d` / 종료 `docker compose down`
 - 전체 테스트: `.\mvnw.cmd test`
 - 테스트 하나만: `.\mvnw.cmd test "-Dtest=ProductServiceTest"`
 - 실행·실패 개수는 `target/surefire-reports/TEST-*.xml`의 `tests`/`failures`/`errors`/`skipped`를 합산해 확인한다 (`-q` 실행 시 요약이 출력되지 않음)
