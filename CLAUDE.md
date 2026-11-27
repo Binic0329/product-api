@@ -92,14 +92,20 @@
 ## 설정과 실행
 
 - `src/main/resources/application.properties`: MySQL `localhost:3306/product_api`, 계정은 환경 변수 `DB_USERNAME`, `DB_PASSWORD`, `ddl-auto=validate`, `spring.jpa.open-in-view=false`(켜면 AI 대기 중 DB 연결을 점유한다. 테스트 설정도 같은 값)
-- 프로필별 설정 파일은 없다 (Story 11에서 기본값과 같던 `application-local.properties`와 pom.xml의 `local` 프로필 설정을 제거)
+- 프로필별 설정 파일은 없다
+- `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=validate`, 테이블은 Flyway가 만든다. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
+- AI 설정 (`application.properties`): `ai.client=${AI_CLIENT:stub}`, `ai.gemini.*`(base-url, model, connect-timeout, read-timeout), `ai.gemini.api-key=${GEMINI_API_KEY:}`
+  - 기본값은 Stub. Gemini 모드인데 키가 비어 있으면 서버 시작 시 `GEMINI_API_KEY is not set`으로 실패한다
+  - 테스트 설정 파일에는 `ai.*`가 없어서 테스트는 기본적으로 Stub 모드다. Gemini 테스트는 `FakeGeminiServer`(localhost)를 쓰고 실제 Google 서버를 호출하지 않는다
+  - 실제 Gemini 호출 확인은 사용자가 환경 변수를 직접 설정해 수동으로 한다. AI는 키 값을 요청·출력하지 않는다
 
 Docker (Story 11):
 - `Dockerfile`(멀티 스테이지, `-DskipTests`, non-root `app` 사용자), `compose.yaml`(`db` = `mysql:8.4` + 볼륨 `db-data` + healthcheck, `app`은 `SPRING_DATASOURCE_URL`로 `db`에 접속), `.dockerignore`
 - 계정은 `.env`(Git 제외)로 받는다. 커밋하는 것은 값이 빈 `.env.example`뿐이다. `.env`를 읽거나 만들지 않는다
 - MySQL 포트는 호스트에 열지 않는다 (사용자의 로컬 MySQL이 3306 사용). 앱 호스트 포트는 `APP_PORT`(기본 8080)
 - 확인용 실행은 사용자의 스택과 겹치지 않게 `docker compose -p product-api-verify`, `APP_PORT=18080`, 그 명령 안에서만 쓰는 임시 계정으로 하고, 끝나면 `down -v`로 확인용 볼륨까지 지운다. 사용자 프로젝트(`product-api`)의 볼륨은 `down -v` 하지 않는다 (데이터 삭제 = 위험한 작업)
-- `src/test/resources/application.properties`: 테스트는 H2 메모리 DB(`MODE=MySQL`), `ddl-auto=validate`, 테이블은 Flyway가 만든다. 이 파일을 삭제하거나 MySQL로 바꾸지 않는다. 삭제되면 테스트가 실제 MySQL에 연결되어 `deleteAll()`로 실제 데이터를 지울 수 있다
+- Compose는 `.env`보다 터미널 환경 변수를 우선한다. 이 PC에는 `spring-boot:run`용 `DB_USERNAME`·`DB_PASSWORD`가 있으므로, `.env` 값을 쓰려면 그 창에서만 `Remove-Item Env:DB_USERNAME, Env:DB_PASSWORD`
+- MySQL 계정은 볼륨이 비어 있을 때 한 번만 만들어진다. 같은 볼륨으로 다른 비밀번호를 넘기면 앱이 접속에 실패한다
 
 DB 스키마 (Flyway, Story 10):
 - 테이블 구조는 `src/main/resources/db/migration`의 SQL 파일로만 바꾼다. `V1__create_products_table.sql`(기존 테이블), `V2__add_product_description.sql`(description 추가)
@@ -107,10 +113,6 @@ DB 스키마 (Flyway, Story 10):
 - `ddl-auto`를 `update`/`create`/`create-drop`으로 되돌리지 않는다 (Flyway와 충돌)
 - `spring.flyway.baseline-on-migrate=false`가 기본값이다. 기록 테이블 없는 기존 MySQL을 전환할 때만 사용자가 백업 후 `SPRING_FLYWAY_BASELINE_ON_MIGRATE=true`로 한 번 실행한다 (README "기존 DB를 Flyway로 전환")
 - 실제 MySQL에 마이그레이션을 적용하는 것은 "위험한 작업"이다. AI가 실행하지 않고, 사용자가 백업과 승인 후 직접 한다
-- AI 설정 (`application.properties`): `ai.client=${AI_CLIENT:stub}`, `ai.gemini.*`(base-url, model, connect-timeout, read-timeout), `ai.gemini.api-key=${GEMINI_API_KEY:}`
-  - 기본값은 Stub. Gemini 모드인데 키가 비어 있으면 서버 시작 시 `GEMINI_API_KEY is not set`으로 실패한다
-  - 테스트 설정 파일에는 `ai.*`가 없어서 테스트는 기본적으로 Stub 모드다. Gemini 테스트는 `FakeGeminiServer`(localhost)를 쓰고 실제 Google 서버를 호출하지 않는다
-  - 실제 Gemini 호출 확인은 사용자가 환경 변수를 직접 설정해 수동으로 한다. AI는 키 값을 요청·출력하지 않는다
 
 명령어 (Windows PowerShell 기준):
 - 서버 실행: `.\mvnw.cmd spring-boot:run`
@@ -211,6 +213,7 @@ API 동작(엔드포인트, 상태 코드, 요청 규칙, 오류 메시지)이 �
 
 ## 개발 보고서
 
+- 설계 결정 기록(ADR)은 `docs/adr/`에 둔다 (현재 `0001-separate-ai-draft-and-save.md`)
 - Story 보고서(코드 리뷰·학습 보고서, 읽기용 PDF)를 쓸 때는 `.claude/skills/story-report/SKILL.md` 양식을 따른다
 - Story를 완료하면 작성한다. `fix`, `docs`, `chore` 작업과 지난 Story는 사용자가 요청할 때 작성한다
 - PDF는 저장소에 넣지 않고 대화창으로만 전달한다
