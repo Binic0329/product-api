@@ -16,6 +16,7 @@
 - Flyway (spring-boot-starter-flyway, flyway-mysql)
 - 테스트: spring-boot-starter-webmvc-test (JUnit, Mockito, MockMvc), H2 (test 전용)
 - 실행 환경(선택): Docker, Docker Compose (`eclipse-temurin:21`, `mysql:8.4`)
+- JSON은 Jackson 3: `JsonMapper`, `TypeReference`는 `tools.jackson.*`, 어노테이션(`@JsonInclude` 등)은 `com.fasterxml.jackson.annotation`
 
 ## 구조
 
@@ -73,7 +74,13 @@
 - `AiTimeoutException`: 504 `AI service timeout`
 - 그 밖의 예외는 502로 감추지 않는다 (기존 규칙대로 500)
 - AI 호출 실패 시 임의의 성공 응답(대체 문구)을 만들어 반환하지 않는다
-- 프롬프트 규칙(`GeminiAiDescriptionClient.SYSTEM_INSTRUCTION`): 한국어 1~3문장, 제공된 이름·가격만 사용, 없는 사양·브랜드를 지어내지 않음, 본문만 출력
+- 프롬프트 규칙(`GeminiAiDescriptionClient.SYSTEM_INSTRUCTION`): 한국어 1~3문장, 존댓말로 끝냄, 제공된 이름·가격만 사용, 없는 사양·브랜드를 지어내지 않음, 본문만 출력, 줄바꿈 없이 한 문단, 이름은 한 번만, 이름에서 알 수 있는 용도 설명, 뻔한 홍보 문구 금지 (Story 12, 현재 v4)
+
+프롬프트 품질 측정 (Story 12):
+- 채점기 `DescriptionQualityChecker`는 테스트 코드에만 있다. 측정 전용이며 실제 API 응답을 거부하지 않는다 (계약 변경 없음)
+- 실제 응답 기록은 `src/test/resources/eval/prompt-vN.json`. 사용자가 Gemini 모드 서버를 띄우고 `scripts/collect-descriptions.ps1 -Output "..."`로 만든다. AI는 실제 Gemini를 호출하지 않는다
+- 프롬프트를 바꾸면 새 버전 기록(`prompt-v5.json` 등)을 받고, `DescriptionQualityEvaluationTest`의 "현재 프롬프트" 테스트를 새 파일로 옮긴다. 이전 기록은 점수만 출력한다
+- 현재 프롬프트는 샘플 8개 중 실패 1건까지 허용한다 (응답이 매번 달라짐). 결과에 맞춰 채점 기준(20자, 300자 등)을 낮추지 않는다. 기준을 바꿔야 하면 이유를 설명하고 사용자 결정을 받는다
 
 요청 본문 검증 (`ProductRequest`):
 - `id`: 보내면 400 (`id must not be provided`). id는 DB가 정하고, PUT은 URL의 id만 사용한다
@@ -119,8 +126,12 @@ DB 스키마 (Flyway, Story 10):
 - Docker로 실행: `docker compose up --build -d` / 종료 `docker compose down`
 - 전체 테스트: `.\mvnw.cmd test`
 - 테스트 하나만: `.\mvnw.cmd test "-Dtest=ProductServiceTest"`
+- Claude Code 입력란의 `!` 명령은 PowerShell이 아니라 Git Bash로 실행된다. 사용자에게 `!`로 PowerShell 스크립트를 안내할 때는 `! pwsh -File scripts/...` 형식으로 쓴다
 - 실행·실패 개수는 `target/surefire-reports/TEST-*.xml`의 `tests`/`failures`/`errors`/`skipped`를 합산해 확인한다 (`-q` 실행 시 요약이 출력되지 않음)
+- 출력의 stack trace는 오류 처리 테스트가 의도적으로 남기는 로그다. 성공·실패 판단은 위 XML 합산으로만 한다
 - 확인용 서버를 띄울 때는 사용자의 서버와 겹치지 않도록 다른 포트를 쓰고, 확인 후 반드시 종료한다: `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--server.port=18080"`
+- 실제 MySQL을 건드리지 않는 확인용 서버(H2 + Stub): `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.useTestClasspath=true" "-Dspring-boot.run.arguments=--server.port=18080 --spring.datasource.url=jdbc:h2:mem:verify;MODE=MySQL;DB_CLOSE_DELAY=-1 --spring.datasource.username=sa --spring.datasource.password= --ai.client=stub"`. Docker Desktop이 꺼져 있을 때도 쓴다
+- 확인용 서버 종료: `Get-NetTCPConnection -LocalPort 18080 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess }`
 
 CI (GitHub Actions):
 - 설정 파일: `.github/workflows/ci.yml`. `main` push와 `main` 대상 PR에서 Java 21로 `./mvnw -B test` 실행
@@ -148,6 +159,8 @@ CI (GitHub Actions):
 | `GeminiDescriptionIntegrationTest` | `@SpringBootTest` + H2 + `ai.client=gemini` + `FakeGeminiServer`. 전체 흐름과 오류별 상태 코드 |
 | `DescriptionReviewFlowIntegrationTest` | `@SpringBootTest` + H2. 등록 → 초안 생성(저장 안 됨) → 설명 저장 → 조회, 수정 시 설명 유지, 1000/1001자. Repository로 DB 확인 |
 | `FlywayMigrationTest` | `@SpringBootTest` + H2. V1·V2 적용 여부, `description` 컬럼 길이와 NULL 허용 |
+| `DescriptionQualityCheckerTest` | 채점기 규칙별 정상·위반·경계값 (3/4문장, 이름 뺀 300/301자, 내용 한글 19/20자, 가격 표기, 존댓말) |
+| `DescriptionQualityEvaluationTest` | `eval/prompt-v*.json` 기록 채점. 이전 버전은 점수만 출력, 현재 버전(v4)은 실패 1건 이하 |
 
 규칙:
 - 테스트 개수는 이 문서에 고정하지 않는다. 작업 전 `.\mvnw.cmd test`로 현재 결과(실행 개수, 실패 개수)를 기준으로 확인한다.

@@ -39,7 +39,7 @@ AI가 구현 중 문제를 발견하면 **임의로 수정하지 않고 먼저 �
 
 AI가 "완료"라고 보고해도 아래 단계로 직접 확인했습니다.
 
-1. 자동화 테스트 실행 (현재 108개)
+1. 자동화 테스트 실행 (현재 149개)
 2. 실제 서버를 띄워 API 요청으로 상태 코드 확인
 3. MySQL에 직접 접속해 `SELECT`로 저장 결과 확인
 4. 서버 재시작 후에도 데이터가 유지되는지 확인
@@ -159,6 +159,7 @@ AI 구현체는 설정(`AI_CLIENT` 환경 변수)으로 고릅니다. 기본값�
 | AI 응답 지연 (타임아웃) | 504 | `AI service timeout` |
 
 **프롬프트 규칙**: 제공된 상품 이름·가격만 사용하고, 제공되지 않은 성능·규격·기능·브랜드는 지어내지 않도록 지시합니다.
+Story 12에서 실제 응답을 측정해 규칙을 보강했습니다: 존댓말로 끝내기, 줄바꿈 없이 한 문단, 상품 이름은 한 번만, 이름에서 알 수 있는 용도 설명, 뻔한 홍보 문구 금지 (아래 "AI 설명 품질 측정").
 규칙은 Gemini의 system instruction으로, 상품 정보는 사용자 메시지로 나눠 보냅니다.
 
 AI 호출부는 `AiDescriptionClient` 인터페이스로 분리되어 있어(Story 8), Story 9에서는 기존 코드를 거의 바꾸지 않고 Gemini 구현체만 추가했습니다.
@@ -205,6 +206,10 @@ src/main/resources/db/migration
 ├── compose.yaml    # 앱 + MySQL 함께 실행
 ├── .env.example    # Compose용 환경 변수 양식 (실제 값은 .env, Git 제외)
 └── .dockerignore   # 이미지 빌드에서 제외할 파일
+
+(Story 12)
+├── scripts/collect-descriptions.ps1   # 샘플 상품 8개의 실제 AI 설명을 받아 JSON으로 저장
+└── src/test/resources/eval/           # 프롬프트 버전별 실제 Gemini 응답 기록 (prompt-v1~v4.json)
 ```
 
 요청 흐름: `Controller → Service → Repository → MySQL`
@@ -348,8 +353,42 @@ Java·MySQL 설치 없이 Docker만으로 앱과 MySQL을 함께 띄웁니다. D
 | `GeminiDescriptionIntegrationTest` | Spring Boot + H2 + 가짜 Gemini 서버 | Gemini 모드에서 Controller부터 Gemini 호출까지 연결, 오류별 상태 코드 |
 | `DescriptionReviewFlowIntegrationTest` | Spring Boot + H2 | 등록 → 초안 생성(저장 안 됨) → 검토한 설명 저장 → 조회, 수정 시 설명 유지 |
 | `FlywayMigrationTest` | Spring Boot + H2 | V1·V2 적용, `description` 컬럼(VARCHAR(1000), NULL 허용) |
+| `DescriptionQualityCheckerTest` | 단위 테스트 | AI 설명 채점기의 규칙별 정상·위반·경계값 (3/4문장, 300/301자, 내용 19/20자 등) |
+| `DescriptionQualityEvaluationTest` | 기록 파일 채점 | 실제 Gemini 응답 기록(v1~v4)을 채점, 현재 프롬프트(v4)는 실패 1건 이하 |
 
-AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 Gemini 서버를 사용하므로, CI에서도 API 키 없이 실행됩니다.
+AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 Gemini 서버나 미리 저장한 응답 기록을 사용하므로, CI에서도 API 키 없이 실행됩니다.
+
+### AI 설명 품질 측정 (Story 12)
+
+AI 설명이 프롬프트 규칙을 지키는지 숫자로 확인하고, 그 결과로 프롬프트를 고쳤습니다.
+샘플 상품 8개(영문·한글 이름, 0원, 숫자가 든 이름, 255자 이름 등)의 실제 Gemini 응답을 기록하고, 채점기(`DescriptionQualityChecker`, 테스트 코드)로 채점합니다.
+
+| 채점 규칙 | 실패 예 |
+|---|---|
+| 1~3문장, 존댓말(`~니다`, `~요`)로 끝남 | `가격은 89,000원이다.` |
+| 한국어 위주, Markdown·따옴표·줄바꿈 없음, 상품 이름을 뺀 본문 300자 이하 | 문장 사이 줄바꿈 |
+| 상품 이름은 한 번만 | `Wireless Mouse 상품을 … 좋은 Wireless Mouse입니다.` |
+| 가격을 쓰면 실제 가격과 같아야 함 (`25,000원`, `2만 5천원` 등) | 25,000원 상품에 `30,000원` |
+| 이름·가격을 빼고 남는 한글 20자 이상 (내용 없는 설명 방지) | `기계식 키보드는 89,000원에 구매할 수 있습니다.` |
+
+이름·가격에 없는 숫자나 영문 단어(용량, 브랜드 등)는 지어냈을 가능성이 있어 "의심"으로 표시하지만, 실패로 세지는 않고 사람이 확인합니다.
+
+| 프롬프트 | 바꾼 규칙 | 통과 | 남은 문제 |
+|---|---|---|---|
+| v1 | (최초) | 3/8 | 이름 반복 5건, 줄바꿈 1건 |
+| v2 | 줄바꿈 금지, 이름 한 번, 뻔한 홍보 문구 금지 | 0/8 | 규칙은 지켰지만 모두 "이름 + 가격"뿐인 빈 설명 |
+| v3 | 이름에서 알 수 있는 용도 설명 | 5/8 | 반말(`~이다`) 3건 |
+| v4 (현재) | 존댓말로 끝내기 | 7/8 | 1건이 내용 기준(20자)에 1자 모자람 |
+
+v2에서는 금지 규칙만 늘리자 점수(규칙 위반 수)는 좋아졌지만 설명이 쓸모없어졌습니다. 그래서 "내용 없는 설명" 규칙을 채점기에 추가하고, 금지 대신 무엇을 쓸지 알려 주는 규칙(v3)으로 바꿨습니다.
+같은 프롬프트도 응답이 매번 달라지고 버전마다 한 번씩만 기록했으므로, 현재 프롬프트는 실패 1건까지 허용합니다.
+
+응답을 다시 기록하려면 Gemini 모드로 서버를 띄운 뒤 다른 PowerShell 창에서 실행합니다 (PowerShell 7 필요, 키는 서버만 사용).
+샘플 상품을 등록해 설명을 받고, 스크립트가 만든 상품만 삭제합니다.
+
+```powershell
+.\scripts\collect-descriptions.ps1 -Output "src/test/resources/eval/prompt-v5.json"
+```
 
 ## 개발 과정
 
@@ -368,7 +407,7 @@ AI 관련 테스트는 실제 Google 서버 대신 내 PC 안에 띄운 가짜 G
 | 9 | Google Gemini API 실제 연동, Stub/Gemini 설정 전환, 429를 503으로 처리, 연결·응답 타임아웃 |
 | 10 | AI 설명 검토 후 저장 (`PUT /products/{id}/description`), 상품 응답 DTO(`ProductResponse`) 도입, Flyway로 스키마 관리 전환 |
 | 11 | Dockerfile(멀티 스테이지, non-root 실행) + Docker Compose(앱 + MySQL, healthcheck, 볼륨), 계정은 `.env`로 분리 |
-| 12 | AI 설명 품질 측정과 프롬프트 개선 — 예정 |
+| 12 | AI 설명 품질 측정과 프롬프트 개선 (실제 응답 기록 + 채점기, 프롬프트 v1→v4 통과 3/8→7/8) |
 | 13 | AI API 호출 보호 (호출 횟수 제한, 사용량 기록) — 예정 |
 
 > Story 1~6은 Git 도입 전에 진행했으며, 그 결과가 첫 커밋에 포함되어 있습니다.
